@@ -6,7 +6,9 @@
   let settingsVisible = false;
   let codexBusy = false;
   let intervalDirty = false;
+  let tokenView = null;
   const finite = value => typeof value === 'number' && Number.isFinite(value);
+  const validToken = value => Number.isSafeInteger(value) && value >= 0;
   const names = { session: '当前时段', weekly: '每周额度', other: '其他额度' };
   const hidden = (id, value) => $(id).classList.toggle('hidden', value);
   const setText = (id, value) => { $(id).textContent = value; };
@@ -34,17 +36,41 @@
     return `${prefix}${seconds} 秒`;
   }
   function tokenText(value) {
-    if (!Number.isSafeInteger(value) || value < 0) return '—';
+    if (!validToken(value)) return '—';
     if (value >= 1e9) return `${(value / 1e9).toFixed(2)} B`;
     if (value >= 1e6) return `${(value / 1e6).toFixed(2)} M`;
     if (value >= 1e4) return `${(value / 1e3).toFixed(1)} K`;
     return value.toLocaleString('zh-CN');
   }
   function tokenDetail(value, key) {
-    if (!Number.isSafeInteger(value) || value < 0) return nativeMode() ? '官方未返回统计' : '官方页面未显示';
+    if (!validToken(value)) return '';
     const date = typeof snapshot()?.tokenDate === 'string' ? snapshot().tokenDate : '';
     const source = nativeMode() ? key === 'today' && date ? `服务端日期 ${date}` : 'Codex 服务端统计' : manual() ? '人工记录' : '页面数值';
     return `${value.toLocaleString('zh-CN')} tokens · ${source}`;
+  }
+  function renderTokens(current) {
+    const source = `${selectedSource()}:${current?.source || ''}`;
+    const available = ['today', 'total'].filter(key => validToken(current?.tokens?.[key]));
+    const hasData = available.length > 0;
+    // Repeated refreshes must not undo a user's disclosure choice. New data or a
+    // source/availability transition gets the appropriate automatic default.
+    if (!tokenView || tokenView.source !== source || tokenView.hasData !== hasData) {
+      $('token-section').open = hasData;
+    }
+    tokenView = { source, hasData };
+    hidden('token-metrics', !hasData);
+    for (const key of ['today', 'total']) {
+      const value = current?.tokens?.[key];
+      hidden(`${key}-token-metric`, !validToken(value));
+      setText(`${key}-tokens`, tokenText(value));
+      setText(`${key}-detail`, tokenDetail(value, key));
+    }
+    setText('token-availability', !hasData ? '未提供' : available.length === 1 ? '部分数据' : nativeMode() ? '账号统计' : '页面统计');
+    setText('today-token-label', nativeMode() ? '最近一日 Token' : '今日 Token');
+    setText('total-token-label', nativeMode() ? '服务端累计 Token' : '累计 Token');
+    setText('tokens-scope', !hasData
+      ? nativeMode() ? '官方暂未提供 Token 统计，额度百分比仍可正常查看。' : '用量页暂未提供 Token 统计，额度百分比仍可正常查看。'
+      : nativeMode() ? 'Codex 服务端统计' : '仅显示页面提供的数值');
   }
   function node(tag, className, text) {
     const element = document.createElement(tag);
@@ -55,7 +81,7 @@
   function renderWindows(items) {
     const list = $('limits-list');
     list.replaceChildren();
-    setText('limits-count', items.length ? `${items.length} 个已识别窗口` : '暂无可识别数值');
+    setText('limits-count', items.length ? `${items.length} 个窗口` : '暂无数据');
     if (!items.length) {
       list.append(node('p', 'empty-data', nativeMode() ? '官方未返回可识别的额度百分比。' : '官方页面未显示可识别的额度百分比。'));
       return;
@@ -87,9 +113,9 @@
     const current = codex.state || 'disabled';
     const labels = { disabled: '尚未开启', reading: '正在读取', ready: '已连接', 'not-found': '未找到 Codex CLI', 'needs-login': '需要登录', unsupported: '请更新 Codex CLI', error: '读取未完成' };
     const messages = {
-      disabled: '开启后由桌面定时查询，无需保留浏览器页面。',
-      reading: '正在向本机官方 Codex 查询用量…',
-      ready: '已连接官方 Codex，按设定间隔自动查询。',
+      disabled: '开启后自动刷新，无需打开网页。',
+      reading: '正在查询 Codex 用量…',
+      ready: '已连接，按设定间隔自动刷新。',
       'not-found': '请先安装官方 Codex CLI，完成登录后重新开启；若刚安装，可退出并重新启动悬浮球。',
       'needs-login': '请在 PowerShell 运行 codex.cmd login，登录同一个 ChatGPT 账号后重新开启。',
       unsupported: '当前 Codex CLI 不支持所需查询，请用下方安装命令更新后重试。',
@@ -109,17 +135,17 @@
     $('refresh-codex-button').disabled = codexBusy || !enabled || !!codex.running;
     setText('refresh-codex-button', codex.running ? '读取中…' : '立即刷新');
     setText('codex-state-label', !enabled && snapshot() && current === 'disabled' ? '已停止' : labels[current] || labels.error);
-    const status = typeof codex.message === 'string' && codex.message ? codex.message : messages[current] || messages.error;
-    setText('codex-status', !enabled && snapshot() && current === 'disabled' ? '已停止查询，保留上次记录；官方 Codex 的登录状态不受影响。' : status);
+    const routine = ['disabled', 'reading', 'ready'].includes(current);
+    const status = !routine && typeof codex.message === 'string' && codex.message ? codex.message : messages[current] || messages.error;
+    setText('codex-status', !enabled && snapshot() && current === 'disabled' ? '已停止刷新，保留上次记录。' : status);
     const pieces = [];
-    if (enabled) pieces.push(`每 ${codex.intervalMinutes || state.settings?.refreshMinutes || 5} 分钟刷新`);
     if (enabled && finite(codex.nextRunAt)) pieces.push(`下次约 ${localTime(codex.nextRunAt)}`);
-    if (finite(codex.lastSuccessAt)) pieces.push(`上次成功 ${localTime(codex.lastSuccessAt)}`);
+    if (finite(codex.lastSuccessAt)) pieces.push(`上次 ${localTime(codex.lastSuccessAt)}`);
     setText('codex-schedule', pieces.join(' · '));
     hidden('codex-setup', !!snapshot() && !['not-found', 'needs-login', 'unsupported', 'error'].includes(current));
-    setText('source-title', native ? '本机 Codex（实验性）' : '浏览器只读同步');
-    setText('scope-description', native ? '额度及 Token 统计来自 Codex 服务返回的数据，不代表所有 ChatGPT 对话的 Token 总量。「最近一日」是服务端最新日期桶，并非本机今日；未返回的字段显示「—」。读取时间不等于服务端统计更新时间。' : '仅显示官方用量页中已识别的指标，不代表所有 ChatGPT 对话的 Token 总量。未显示的数据为「—」。页面读取时间不等于服务器数据更新时间。');
-    setText('settings-source-note', native ? '本机 Codex 模式无需浏览器配对。停止读取只停止悬浮球查询，不退出官方 CLI 账号。切换来源后需重新开启读取。快捷键 Ctrl + Alt + G 可展开或收起面板。' : '配对只允许本机扩展更新显示数值，不授予账号操作权限。退出工具或浏览器后需要重新配对。快捷键 Ctrl + Alt + G 可展开或收起面板。');
+    setText('source-title', native ? 'Codex · 实验性' : '浏览器同步');
+    setText('scope-description', native ? '仅代表 Codex 服务统计，非全部 ChatGPT Token。「最近一日」采用服务端日期，并非本机今日。读取时间不代表统计更新时间。' : '仅显示官方页面已提供的指标，非全部 ChatGPT Token。读取时间不代表统计更新时间。');
+    setText('settings-source-note', native ? '停止刷新不会退出 Codex 账号。切换来源后需重新开启。Ctrl + Alt + G 展开或收起面板。' : '配对仅同步数值，不授予账号操作权限。退出后需重新配对。Ctrl + Alt + G 展开或收起面板。');
   }
   function renderStatus() {
     const hasSnapshot = !!snapshot();
@@ -132,14 +158,14 @@
     $('footer-dot').classList.toggle('online', online);
     $('footer-dot').classList.toggle('stale', hasSnapshot && (historic || isManual));
     setText('source-badge', isManual ? '人工记录' : hasSnapshot && historic ? '上次记录' : hasSnapshot ? native ? 'Codex 记录' : '页面记录' : native ? '待连接' : '待配对');
-    setText('source-description', native ? '官方 CLI 管理登录 · 无需打开用量网页' : isManual ? '手动录入官方页面所示数值' : hasSnapshot ? '仅同步官方页面明确显示的用量数字' : '登录留在官方网页，用量留在桌面');
+    setText('source-description', native ? '官方 CLI 登录 · 无需网页' : isManual ? '手动录入官方页面数值' : hasSnapshot ? '同步官方用量页' : '通过本机扩展连接');
     let note = '';
-    if (isManual) note = '当前是人工记录，不会自动反映账号用量变化。';
-    else if (native && hasSnapshot && !state.codex?.enabled) note = '自动读取已停止，当前显示上次成功记录。开启后才会继续更新。';
-    else if (native && isStale) note = '已超过预期刷新时间，当前显示历史记录。请查看上方读取状态或点击「立即刷新」。';
-    else if (native && historic && hasSnapshot) note = '本次查询尚未成功，当前保留上次有效记录及读取时间。';
-    else if (isStale) note = '上次成功读取已超过 3 分钟，当前显示历史记录。后台刷新间隔较长时也会出现此提示；可在浏览器扩展中查看下次刷新时间或错误。';
-    else if (state.error && hasSnapshot) note = '同步遇到问题，当前显示上次页面记录。';
+    if (isManual) note = '人工记录，不会自动更新。';
+    else if (native && hasSnapshot && !state.codex?.enabled) note = '自动读取已停止，显示上次记录。';
+    else if (native && isStale) note = '超过预期刷新时间，显示上次记录。';
+    else if (native && historic && hasSnapshot) note = '本次未能更新，保留上次记录。';
+    else if (isStale) note = '读取已超过 3 分钟，显示上次记录。';
+    else if (state.error && hasSnapshot) note = '同步异常，保留上次记录。';
     setText('freshness-note', note);
     hidden('freshness-note', !note);
     const codexStatuses = { disabled: hasSnapshot ? '已停止 · 显示上次记录' : '等待开启 Codex 查询', reading: hasSnapshot ? '正在刷新 Codex 记录' : '正在连接本机 Codex', ready: historic ? '显示上次读取记录' : 'Codex 自动读取已开启', 'not-found': '请安装官方 Codex CLI', 'needs-login': '请在官方 Codex CLI 登录', unsupported: '请更新官方 Codex CLI', error: 'Codex 读取异常' };
@@ -160,7 +186,7 @@
   function renderUpdates() {
     const updates = state.updates || {};
     const status = updates.status || 'unconfigured';
-    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.3.0';
+    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.3.1';
     const availableVersion = typeof updates.availableVersion === 'string' ? updates.availableVersion : '';
     const messages = {
       unconfigured: '更新源尚未启用',
@@ -206,6 +232,9 @@
     hidden('setup-extension-note', !extensionError && !extension.needsReload);
   }
   function render() {
+    for (const [name, key] of [['native-backdrop', 'nativeBackdrop'], ['reduced-transparency', 'reducedTransparency'], ['high-contrast', 'highContrast']]) {
+      document.body.classList.toggle(name, state.appearance?.[key] === true);
+    }
     const items = windows();
     const tightest = [...items].sort((a, b) => a.remaining - b.remaining)[0];
     const current = snapshot();
@@ -216,23 +245,16 @@
     setText('remaining-number', tightest ? formatPercent(tightest.remaining) : '—');
     hidden('remaining-symbol', !tightest);
     setText('hero-tag', tightest ? windowName(tightest) : native ? 'Codex 记录' : '页面记录');
-    setText('hero-description', tightest ? `取已识别窗口中剩余额度最低值 · ${native ? 'Codex 服务' : manual() ? '人工记录' : '页面数值'}` : native ? '官方未返回可识别额度' : '官方页面未显示可识别额度');
-    setText('reset-label', native ? '距离官方所示重置' : '距离页面所示重置');
+    setText('hero-description', tightest ? '各窗口中剩余额度最少' : native ? '官方暂未提供额度' : '页面暂未显示额度');
+    setText('reset-label', '距离重置');
     $('hero-progress').style.strokeDashoffset = String(226.195 * (1 - (tightest?.remaining || 0) / 100));
     $('quota-hero').classList.toggle('warning', !!tightest && tightest.remaining > 10 && tightest.remaining <= 25);
     $('quota-hero').classList.toggle('danger', !!tightest && tightest.remaining <= 10);
     renderWindows(items);
-    for (const key of ['today', 'total']) {
-      const value = current?.tokens?.[key];
-      setText(`${key}-tokens`, tokenText(value));
-      setText(`${key}-detail`, tokenDetail(value, key));
-    }
-    setText('today-token-label', native ? '最近一日 Token' : '今日 Token');
-    setText('total-token-label', native ? '服务端累计 Token' : '累计 Token');
-    setText('tokens-scope', native ? 'Codex 服务端统计' : '仅显示页面明确提供的数值');
+    renderTokens(current);
     hidden('reset-credits-row', !native);
     setText('reset-credits', Number.isSafeInteger(current?.resetCredits) && current.resetCredits >= 0 ? String(current.resetCredits) : '—');
-    setText('unrecognized-note', native ? '官方暂未返回可识别的额度窗口。若 Token 统计可用，会单独显示；空白字段保持未知。' : '页面布局暂未识别。可在浏览器扩展中手动录入页面明确显示的数值；空白字段保持未知。');
+    setText('unrecognized-note', native ? '官方暂未提供可识别的额度窗口。' : '页面布局暂未识别，可在扩展中手动记录官方页面数值。');
     hidden('unrecognized-note', !!items.length || manual());
     setText('record-label', native ? 'Codex 读取时间' : manual() ? '人工记录时间' : '页面读取时间');
     const timestamp = current?.capturedAt;

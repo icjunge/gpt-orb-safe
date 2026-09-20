@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPT 用量悬浮球 · 页面同步",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "minimum_chrome_version": "114",
   "description": "同步官方用量页可见数字到本机悬浮球，可选定时后台读取；登录凭据仅由浏览器与官方网站管理。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2H/dKuytVyEKEkeO+GoL5wgcmYKVMJ5IiIJbIl9TIukMKwrcWEt56PSbrvyjEEhFO8T8nVbZ/CvGFAHU7cY+oQpQXSFToLlTyhP2B8LQzUd+WHcAqUKYj4QoR53JUGP1xEztmr+pCM3eUUKpA3oxtJzjvKhChpuBIjOeldBnG8veONccAZKoN4bRxBbX+PSQomsOV0NAcb6ZgWCqSqxbpad+FkBrH+8zkQTo+j5KsG9RTsZvmMXsz55sobHriIRDY/iVmgTO1rsVgOsYKDCfp63LANQqxCHQ8BMWWxDcNDUK48IuUCQgtJNMV+wumCubgMxokusFLvDfg7UE/s+FfwIDAQAB",

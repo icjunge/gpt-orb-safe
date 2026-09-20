@@ -43,6 +43,8 @@ test('first setup uses a stable path; a second launch leaves unchanged files unt
 
 test('a new release swaps complete bundles and keeps one complete previous version', async t => {
   const f = await fixture(t);
+  // Keep synthetic upgrade versions independent of the checked-out app version.
+  await changeManifest(f.sourceDir, { version: '2.2.0' });
   await syncExtension(f);
   const old = await bytes(f.target);
   await changeManifest(f.sourceDir, { version: '2.3.0' });
@@ -59,6 +61,7 @@ test('a new release swaps complete bundles and keeps one complete previous versi
 
 test('a browser lock during replacement restores the previous complete extension', async t => {
   const f = await fixture(t);
+  await changeManifest(f.sourceDir, { version: '2.2.0' });
   const first = await syncExtension(f);
   const old = await bytes(f.target);
   await changeManifest(f.sourceDir, { version: '2.3.0' });

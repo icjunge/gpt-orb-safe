@@ -15,7 +15,7 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, bridgeFails = false} = {}) {
+async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
   const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[]};
   const userData = '/virtual-orb/user-data';
@@ -25,6 +25,7 @@ async function launch({preferences, bridgeFails = false} = {}) {
   let nextTimer = 1;
   const addTimer = (callback, delay) => { const id = nextTimer++; timers.set(id, {callback, delay}); return id; };
   const app = new EventEmitter();
+  const nativeTheme=Object.assign(new EventEmitter(),{prefersReducedTransparency:false,shouldUseHighContrastColors:false},theme);
   Object.assign(app, {
     isPackaged:false,
     setName(){}, setAppUserModelId(){}, requestSingleInstanceLock:()=>true,
@@ -50,6 +51,8 @@ async function launch({preferences, bridgeFails = false} = {}) {
     loadFile(file){this.webContents.mainFrame.url=pathToFileURL(file).href;}
     isDestroyed(){return false;}
     setAlwaysOnTop(){} setOpacity(){} focus(){}
+    setBackgroundMaterial(value){if(backdropFails&&value==='acrylic')throw new Error('unavailable compositor');this.material=value;}
+    setBackgroundColor(value){this.backgroundColor=value;}
     showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
     isVisible(){return this.visible;}
     getBounds(){return this.bounds;} setBounds(bounds){this.bounds={...this.bounds,...bounds};}
@@ -84,7 +87,7 @@ async function launch({preferences, bridgeFails = false} = {}) {
     emitSnapshot(snapshot){this.options.onSnapshot(snapshot);}
   }
   const electron={
-    app,BrowserWindow:Window,Tray,
+    app,BrowserWindow:Window,Tray,nativeTheme,
     ipcMain:{handle:(channel, handler)=>handlers.set(channel,handler)},
     screen:Object.assign(new EventEmitter(),{
       getPrimaryDisplay:()=>({workArea:{x:0,y:0,width:1920,height:1080}}),
@@ -106,11 +109,12 @@ async function launch({preferences, bridgeFails = false} = {}) {
     mkdirSync(){},existsSync:file=>files.has(file)
   };
   const modules={
-    electron,'node:fs':virtualFs,'node:path':path,'node:url':{pathToFileURL},
+    electron,'node:fs':virtualFs,'node:path':path,'node:url':{pathToFileURL},'node:os':{release:()=>release},
     './security.cjs':security,'./bridge.cjs':{UsageBridge:Bridge},
     './extension-store.cjs':{syncExtension:async()=>({path:'/virtual-orb/extension',version:'2.3.0',changed:false})},
     './updater.cjs':{UpdateManager:class {constructor(){throw new Error('not packaged');}}},
     './codex-provider.cjs':{CodexProvider:Provider},
+    './window-material.cjs':require('../src/window-material.cjs'),
     './codex-discovery.cjs':{discoverCodex:()=>{calls.discover += 1;throw new Error('discovery must not execute in controller tests');}}
   };
   vm.runInNewContext(mainSource, {
@@ -126,10 +130,49 @@ async function launch({preferences, bridgeFails = false} = {}) {
   const event={sender,senderFrame:sender.mainFrame};
   const state=()=>clone(handlers.get('orb:state')(event));
   const action=async(name,payload,source=event)=>clone(await handlers.get('orb:action')(source,name,payload));
-  return {app,windows,provider:providers[0],bridge:bridges[0],calls,state,action,event,handlers,timers,
+  return {app,windows,nativeTheme,provider:providers[0],bridge:bridges[0],calls,state,action,event,handlers,timers,
     saved:()=>JSON.parse(files.get(preferencesPath)),
     async quit(){app.quit();await settle();}};
 }
+
+test('native acrylic applies only to the panel and follows accessibility changes without widening IPC',async()=>{
+  const h=await launch();
+  const [orb,panel]=h.windows;
+  assert.equal(orb.options.transparent,true);
+  assert.equal(orb.material,undefined);
+  assert.equal(panel.options.transparent,false);
+  assert.equal(panel.options.roundedCorners,true);
+  assert.equal(panel.material,'acrylic');
+  assert.equal(panel.backgroundColor,'#00000000');
+  assert.deepEqual(h.state().appearance,{nativeBackdrop:true,reducedTransparency:false,highContrast:false});
+  h.nativeTheme.prefersReducedTransparency=true;
+  h.nativeTheme.emit('updated');
+  assert.equal(panel.material,'none');
+  assert.equal(h.state().appearance.reducedTransparency,true);
+  assert.equal(h.state().appearance.nativeBackdrop,false);
+  h.nativeTheme.prefersReducedTransparency=false;
+  h.nativeTheme.shouldUseHighContrastColors=true;
+  h.nativeTheme.emit('updated');
+  assert.equal(panel.material,'none');
+  assert.equal(h.state().appearance.highContrast,true);
+  h.nativeTheme.shouldUseHighContrastColors=false;
+  h.nativeTheme.emit('updated');
+  assert.equal(panel.material,'acrylic');
+  assert.deepEqual([...h.handlers.keys()],['orb:state','orb:action']);
+});
+
+test('unsupported Windows and compositor failures retain a usable panel and native quota controller',async()=>{
+  const legacy=await launch({release:'10.0.19045'});
+  assert.equal(legacy.windows[1].options.transparent,true);
+  assert.equal(legacy.windows[1].material,undefined);
+  assert.equal(legacy.state().appearance.nativeBackdrop,false);
+  const failed=await launch({backdropFails:true});
+  assert.equal(failed.windows[1].material,'none');
+  assert.equal(failed.windows[1].backgroundColor,'#f1f4f8');
+  assert.equal(failed.state().appearance.nativeBackdrop,false);
+  assert.equal((await failed.action('enableCodex')).ok,true);
+  assert.deepEqual(failed.provider.starts,[5]);
+});
 
 function reading(source='codex-cli', usedPercent=30) {
   return {version:1,source,capturedAt:Date.now(),windows:[{kind:'weekly',usedPercent,

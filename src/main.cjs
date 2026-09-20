@@ -1,8 +1,9 @@
 'use strict';
 const {app,BrowserWindow,ipcMain,screen,Tray,Menu,nativeImage,shell,Notification,
-  globalShortcut,dialog,clipboard} = require('electron');
+  globalShortcut,dialog,clipboard,nativeTheme} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const {pathToFileURL} = require('node:url');
 const {UsageBridge} = require('./bridge.cjs');
 const {syncExtension} = require('./extension-store.cjs');
@@ -10,11 +11,13 @@ const {UpdateManager} = require('./updater.cjs');
 const {validSettings,allowedSender} = require('./security.cjs');
 const {CodexProvider} = require('./codex-provider.cjs');
 const {discoverCodex} = require('./codex-discovery.cjs');
+const {supportsAcrylic,systemAppearance,applyPanelMaterial} = require('./window-material.cjs');
 app.setName('GPT Usage Orb Safe');
 app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
 let codexProvider=null;
+let appearance=systemAppearance(nativeTheme);
 const unavailableUpdates=()=>({status:'unconfigured',currentVersion:app.getVersion(),availableVersion:null,progress:null,
   message:'请使用支持更新的安装版，并启用发布源。',lastCheckedAt:null,repository:null});
 let settings=validSettings({}),savedPosition=null,snapshot=null,error=null,notified=new Set();
@@ -38,7 +41,7 @@ function currentError(){const status=nativeStatus();return settings.usageSource=
 function state(){const status=bridge?.getStatus()||{listening:false,connected:false,lastReceivedAt:null,port:43861};
   const activeError=currentError();
   return {status:activeError?'error':snapshot?'ready':settings.usageSource==='codex-cli'||status.listening?'waiting':'starting',
-    bridge:status,snapshot,settings,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
+    bridge:status,snapshot,settings,appearance,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
     updates:updateManager?.snapshot()||unavailableUpdates(),
     extension:extensionInfo?{version:extensionInfo.version,changed:extensionInfo.changed,needsReload:extensionInfo.changed,error:extensionInfo.error||null}:null};}
 function clampPosition(position,width=92,height=104){
@@ -70,7 +73,16 @@ function createWindows(){
     webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,
       webSecurity:true,webviewTag:false,backgroundThrottling:true,spellcheck:false}};
   orbWindow=new BrowserWindow({...common,width:92,height:104,...clampPosition(savedPosition),hasShadow:false});
-  panelWindow=new BrowserWindow({...common,width:440,height:780,hasShadow:true});
+  const nativePanel=supportsAcrylic(process.platform,os.release());
+  panelWindow=new BrowserWindow({...common,width:440,height:780,hasShadow:true,roundedCorners:true,
+    transparent:!nativePanel});
+  const updateAppearance=()=>{
+    appearance=applyPanelMaterial(panelWindow,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    publish();
+  };
+  updateAppearance();
+  nativeTheme.on('updated',updateAppearance);
+  panelWindow.once('closed',()=>nativeTheme.removeListener('updated',updateAppearance));
   for(const [win,name]of[[orbWindow,'orb'],[panelWindow,'panel']]){
     const file=path.join(__dirname,'ui',name+'.html');harden(win,file);win.setAlwaysOnTop(settings.alwaysOnTop,'floating');
     win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});win.loadFile(file);

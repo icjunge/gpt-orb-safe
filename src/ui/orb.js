@@ -22,6 +22,9 @@
     return `${Math.ceil(seconds)}秒`;
   }
   function render() {
+    for (const [name, key] of [['reduced-transparency', 'reducedTransparency'], ['high-contrast', 'highContrast']]) {
+      document.body.classList.toggle(name, state.appearance?.[key] === true);
+    }
     const tightest = windows()[0];
     const native = nativeMode();
     const current = snapshot();

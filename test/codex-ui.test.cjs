@@ -26,7 +26,7 @@ function harness(page, initial, actionImpl = async () => ({ ok: true })) {
     const listeners = new Map();
     const node = {
       id, textContent: '', value: /\bvalue="([^"]*)"/.exec(attrs)?.[1] || '', disabled: /\bdisabled\b/.test(attrs),
-      className: /\bclass="([^"]*)"/.exec(attrs)?.[1] || '', dataset: {}, style: {}, children: [], checked: false,
+      className: /\bclass="([^"]*)"/.exec(attrs)?.[1] || '', dataset: {}, style: {}, children: [], checked: false, open: /\bopen\b/.test(attrs),
       addEventListener(name, fn) { listeners.set(name, [...listeners.get(name) || [], fn]); },
       dispatch(type, extra = {}) { for (const fn of listeners.get(type) || []) fn({ preventDefault() {}, target: this, ...extra }); },
       append(...children) { this.children.push(...children); },
@@ -48,7 +48,7 @@ function harness(page, initial, actionImpl = async () => ({ ok: true })) {
   for (const match of html.matchAll(/<[a-z][\w-]*\b([^>]*\bid="([^"]+)"[^>]*)>/gi)) nodes.set(match[2], element(match[2], match[1]));
   const scroll = element();
   const document = {
-    activeElement: null,
+    activeElement: null, body: element('body'),
     getElementById(id) { assert.ok(nodes.has(id), `missing ${id}`); return nodes.get(id); },
     createElement() { const node = element(); created.push(node); return node; },
     querySelector(selector) { assert.equal(selector, '.main-scroll'); return scroll; },
@@ -102,6 +102,78 @@ test('native labels and service date are literal text and unknown reset credits 
   h.change({ ...state, snapshot: { ...state.snapshot, resetCredits: null, tokens: { today: null, total: null } } });
   assert.equal(h.node('reset-credits').textContent, '—');
   assert.equal(h.node('today-tokens').textContent, '—');
+});
+
+test('unavailable or invalid Token values collapse the module without showing empty metric cards', async () => {
+  const state = fixture();
+  const h = harness('panel', state); await flush();
+  for (const tokens of [undefined, {}, { today: null, total: null }, { today: -1, total: '123' },
+    { today: NaN, total: Infinity }, { today: 1.5, total: Number.MAX_SAFE_INTEGER + 1 }]) {
+    h.change({ ...state, snapshot: { ...state.snapshot, tokens } });
+    assert.equal(h.node('token-section').open, false);
+    assert.equal(h.node('token-availability').textContent, '未提供');
+    assert.equal(h.node('token-metrics').classList.contains('hidden'), true);
+    assert.equal(h.node('today-token-metric').classList.contains('hidden'), true);
+    assert.equal(h.node('total-token-metric').classList.contains('hidden'), true);
+    assert.match(h.node('tokens-scope').textContent, /暂未提供 Token 统计/);
+  }
+});
+
+test('zero Token totals remain valid and partial Token data hides only the unavailable metric', async () => {
+  const state = fixture();
+  const h = harness('panel', { ...state, snapshot: { ...state.snapshot, tokens: { today: 0, total: 0 } } }); await flush();
+  assert.equal(h.node('token-section').open, true);
+  assert.equal(h.node('token-availability').textContent, '账号统计');
+  assert.equal(h.node('today-tokens').textContent, '0');
+  assert.equal(h.node('total-tokens').textContent, '0');
+  for (const key of ['today', 'total']) assert.equal(h.node(`${key}-token-metric`).classList.contains('hidden'), false);
+  for (const key of ['today', 'total']) {
+    h.change({ ...state, snapshot: { ...state.snapshot, tokens: { [key]: 0 } } });
+    assert.equal(h.node('token-section').open, true);
+    assert.equal(h.node('token-metrics').classList.contains('hidden'), false);
+    assert.equal(h.node('token-availability').textContent, '部分数据');
+    assert.equal(h.node(`${key}-token-metric`).classList.contains('hidden'), false);
+    assert.equal(h.node(`${key === 'today' ? 'total' : 'today'}-token-metric`).classList.contains('hidden'), true);
+  }
+});
+
+test('Token disclosure follows availability transitions while preserving manual choices on refresh', async () => {
+  const state = fixture(); const h = harness('panel', state); await flush();
+  assert.equal(h.node('token-section').open, true);
+  h.node('token-section').open = false;
+  h.change(state);
+  h.tick();
+  assert.equal(h.node('token-section').open, false, 'a manual collapse survives repeated refreshes');
+  h.change({ ...state, snapshot: { ...state.snapshot, tokens: { today: 5 } } });
+  assert.equal(h.node('token-section').open, false, 'partial values do not undo a manual collapse');
+  const missing = { ...state, snapshot: { ...state.snapshot, tokens: null } };
+  h.change(missing);
+  assert.equal(h.node('token-section').open, false);
+  h.node('token-section').open = true;
+  h.change(missing);
+  assert.equal(h.node('token-section').open, true, 'a user can keep the unavailable explanation open');
+  h.change(state);
+  assert.equal(h.node('token-section').open, true, 'newly available data expands automatically');
+  h.change(missing);
+  assert.equal(h.node('token-section').open, false, 'loss of data collapses an open module');
+  h.change(state);
+  h.node('token-section').open = false;
+  h.change({ ...state, usageSource: 'browser', settings: { usageSource: 'browser' }, snapshot: { ...state.snapshot, source: 'official-page' } });
+  assert.equal(h.node('token-section').open, true, 'switching sources restores the availability default');
+  assert.equal(h.node('token-availability').textContent, '页面统计');
+});
+
+test('native appearance flags update body classes and legacy state keeps the fallback', async () => {
+  const state = fixture();
+  for (const page of ['panel', 'orb']) {
+    const h = harness(page, state); await flush();
+    for (const name of ['native-backdrop', 'reduced-transparency', 'high-contrast']) assert.equal(h.document.body.classList.contains(name), false);
+    h.change({ ...state, appearance: { nativeBackdrop: true, reducedTransparency: true, highContrast: true } });
+    assert.equal(h.document.body.classList.contains('native-backdrop'), page === 'panel');
+    for (const name of ['reduced-transparency', 'high-contrast']) assert.equal(h.document.body.classList.contains(name), true);
+    h.change({ ...state, appearance: { nativeBackdrop: 'yes', reducedTransparency: false, highContrast: false } });
+    for (const name of ['native-backdrop', 'reduced-transparency', 'high-contrast']) assert.equal(h.document.body.classList.contains(name), false);
+  }
 });
 
 test('native freshness follows configured interval and stop preserves a historical reading', async () => {

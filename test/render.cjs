@@ -19,11 +19,23 @@ async function make(page,width,height){
   const errors=[];
   w.webContents.on('console-message',(_e,level,message)=>{if(level>=3)errors.push(message);});
   await w.loadFile(path.join(__dirname,'../src/ui',page+'.html'));
-  await wait(300);return {w,errors,width,height};
+  const view={w,errors,width,height};
+  // Ozone headless can report a 1×1 viewport despite the requested native size.
+  // Override only the test viewport; production window behavior is unchanged.
+  if(await w.webContents.executeJavaScript('innerWidth')!==width){
+    w.webContents.debugger.attach('1.3');view.emulated=true;
+    await w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+  }
+  await wait(300);return view;
+}
+async function resize(view,width,height){
+  view.w.setSize(width,height);view.width=width;view.height=height;
+  if(view.emulated)await view.w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+  await wait(100);
 }
 async function change(view,newState){state=newState;view.w.webContents.send('test:update',state);await wait(100);}
 async function run(view,code){return view.w.webContents.executeJavaScript(code);}
-async function shot(view,name){view.w.webContents.invalidate();await wait(250);const image=await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height});equal(image.getSize().width,view.width);fs.writeFileSync(path.join(out,name),image.toPNG());}
+async function shot(view,name){view.w.webContents.invalidate();await wait(250);const image=await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height});equal(image.getSize().width,view.width);equal(image.getSize().height,view.height);fs.writeFileSync(path.join(out,name),image.toPNG());}
 app.whenReady().then(async()=>{
   fs.mkdirSync(out,{recursive:true});
   const panel=await make('panel',440,780);
@@ -150,7 +162,7 @@ app.whenReady().then(async()=>{
   await change(panel,hostile);
   equal(await run(panel,"document.querySelectorAll('#error-text img').length"),0);
   equal(await run(panel,"document.getElementById('error-text').textContent"),hostile.error);
-  panel.w.setSize(380,600);await wait(100);
+  await resize(panel,380,600);
   equal(await run(panel,"document.documentElement.scrollWidth<=innerWidth"),true);
   await change(panel,live);
   const orb=await make('orb',92,104);
@@ -159,6 +171,67 @@ app.whenReady().then(async()=>{
   await change(orb,stale);equal(await run(orb,"document.getElementById('orb-unit').textContent"),'上次记录');
   await change(orb,manual);equal(await run(orb,"document.getElementById('orb-unit').textContent"),'人工记录');
   await change(orb,expired);equal(await run(orb,"document.getElementById('reset').textContent"),'等待页面确认');
+  // Native Codex fixtures exercise disclosure behavior in the real renderer.
+  // All numbers below are examples; no account, credentials, or network is used.
+  const version=require('../package.json').version;
+  const native={...configured,updates:{...updates,currentVersion:version},extension:{version,needsReload:false},usageSource:'codex-cli',settings:{...configured.settings,usageSource:'codex-cli',refreshMinutes:5,codexEnabled:true},
+    staleAfterMs:390000,codex:{enabled:true,running:false,state:'ready',intervalMinutes:5,lastSuccessAt:now,nextRunAt:now+300000},
+    snapshot:{version:2,source:'codex-cli',capturedAt:now,windows:[
+      {id:'codex-primary',kind:'cli',label:'Codex · 5 小时',usedPercent:24,resetAt:now+8640000},
+      {id:'codex-secondary',kind:'cli',label:'Codex · 每周',usedPercent:36,resetAt:now+194340000}
+    ],tokens:{today:null,total:null},tokenScope:'account',tokenDate:'2026-09-19',resetCredits:2}};
+  await resize(panel,440,780);await change(panel,native);
+  await run(panel,"document.querySelector('.main-scroll').scrollTop=0;document.querySelector('.brand-caption').textContent='界面预览 · 示例数据'");
+  equal(await run(panel,"document.getElementById('token-section').open"),false);
+  equal(await run(panel,"document.getElementById('token-metrics').classList.contains('hidden')"),true);
+  equal(await run(panel,"document.getElementById('token-section').getBoundingClientRect().height<70"),true,'unavailable token module occupies only its summary');
+  equal(await run(panel,"document.getElementById('quota-hero').getBoundingClientRect().top<document.getElementById('codex-controls').getBoundingClientRect().top"),true,'usage appears before refresh configuration');
+  await shot(panel,'native-tokens-unavailable.png');
+  await run(panel,"document.querySelector('#token-section summary').click();document.getElementById('token-section').scrollIntoView({block:'center'})");
+  equal(await run(panel,"document.getElementById('token-section').open"),true);
+  equal(await run(panel,"document.getElementById('token-metrics').classList.contains('hidden')"),true);
+  await shot(panel,'native-tokens-unavailable-expanded.png');
+  await run(panel,"document.querySelector('#token-section summary').click()");
+  await change(panel,native);
+  equal(await run(panel,"document.getElementById('token-section').open"),false,'refresh retains a manual collapse');
+  const partial={...native,snapshot:{...native.snapshot,tokens:{today:0,total:null}}};
+  await change(panel,partial);
+  equal(await run(panel,"document.getElementById('token-section').open"),true,'new token availability expands the module');
+  equal(await run(panel,"document.getElementById('today-tokens').textContent"),'0');
+  equal(await run(panel,"document.getElementById('today-token-metric').classList.contains('hidden')"),false);
+  equal(await run(panel,"document.getElementById('total-token-metric').classList.contains('hidden')"),true);
+  await run(panel,"document.getElementById('token-section').scrollIntoView({block:'center'})");
+  await shot(panel,'native-tokens-partial.png');
+  await run(panel,"document.querySelector('#token-section summary').click()");
+  await change(panel,partial);
+  equal(await run(panel,"document.getElementById('token-section').open"),false,'valid-token refresh retains a manual collapse');
+  const complete={...native,snapshot:{...native.snapshot,tokens:{today:12450,total:1234567}}};
+  await change(panel,complete);
+  await run(panel,"document.querySelector('#token-section summary').click();document.getElementById('token-section').scrollIntoView({block:'center'})");
+  await shot(panel,'native-tokens-available.png');
+  await change(panel,native);
+  equal(await run(panel,"document.getElementById('token-section').open"),false,'lost token availability automatically collapses the module');
+  await resize(panel,380,600);
+  await run(panel,"document.querySelector('.main-scroll').scrollTop=0");
+  equal(await run(panel,"document.documentElement.scrollWidth<=innerWidth&&document.querySelector('.main-scroll').scrollWidth<=document.querySelector('.main-scroll').clientWidth"),true,'compact panel has no horizontal overflow');
+  await shot(panel,'native-compact.png');
+  await resize(panel,440,780);
+  await run(panel,"document.getElementById('settings-button').click()");
+  await shot(panel,'native-settings.png');
+  await run(panel,"document.getElementById('back-button').click()");
+  await change(panel,{...native,appearance:{nativeBackdrop:false,reducedTransparency:true,highContrast:true}});
+  equal(await run(panel,"document.body.classList.contains('high-contrast')&&document.body.classList.contains('reduced-transparency')"),true);
+  await shot(panel,'native-high-contrast.png');
+  await change(panel,{...native,appearance:{nativeBackdrop:false,reducedTransparency:true,highContrast:false}});
+  equal(await run(panel,"document.body.classList.contains('high-contrast')"),false);
+  equal(await run(panel,"document.body.classList.contains('reduced-transparency')"),true);
+  await shot(panel,'native-reduced-transparency.png');
+  await change(panel,{...native,snapshot:null,codex:{enabled:false,running:false,state:'disabled'},settings:{...native.settings,codexEnabled:false}});
+  equal(await run(panel,"document.getElementById('codex-setup').classList.contains('hidden')"),false);
+  await shot(panel,'native-first-use.png');
+  await change(orb,native);
+  equal(await run(orb,"document.getElementById('orb-value').textContent"),'64%');
+  await shot(orb,'native-orb.png');
   equal(panel.errors.length+orb.errors.length,0,JSON.stringify([...panel.errors,...orb.errors]));
   console.log(`Renderer acceptance: ${checks} checks passed; offline fixture screenshots saved.`);app.quit();
 }).catch(error=>{console.error(error.stack);app.exit(1);});
