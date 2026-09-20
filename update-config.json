@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "repository": null,
-  "publicKey": null,
+  "repository": "icjunge/gpt-orb-safe",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAUsls50XgugrKZVdQWj6cd2tDFytpgYgU/FSCdq2X71Y=\n-----END PUBLIC KEY-----\n",
   "channel": "stable"
 }
