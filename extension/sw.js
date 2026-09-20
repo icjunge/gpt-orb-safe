@@ -3,11 +3,35 @@
 const PORT = 43861;
 const ENDPOINT = `http://127.0.0.1:${PORT}/v1/usage`;
 const POPUP_URL = chrome.runtime.getURL('popup.html');
+const USAGE_URL = 'https://chatgpt.com/settings/usage?tab=overview';
+const HOST_PERMISSION = { origins: ['https://chatgpt.com/*'] };
+const PERIOD_ALARM = 'orb:auto-refresh';
+const TIMEOUT_ALARM = 'orb:auto-timeout';
+const RUN_TIMEOUT = 60000;
+const HYDRATION_TIMEOUT = 15000;
 const CODE = /^GPTORB2\.43861\.([A-Za-z0-9_-]{43})$/;
 const ready = chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
 const requests = new Set();
 let postSequence = 0;
 let controls = Promise.resolve();
+let activeTask = null;
+let hydrationTimer = null;
+const activatedTabs = new Set();
+
+function serial(work) {
+  const result = controls.then(work);
+  controls = result.catch(() => {});
+  return result;
+}
+
+function generation() { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+function hasMetrics(value) {
+  return value.windows.length > 0 || value.tokens.total !== null || value.tokens.today !== null;
+}
+function validMinutes(value) { return Number.isInteger(value) && value >= 1 && value <= 1440; }
+function validBridge(bridge) {
+  return Boolean(bridge && typeof bridge.secret === 'string' && /^[A-Za-z0-9_-]{43}$/.test(bridge.secret));
+}
 
 function isUsagePage(value) {
   try {
@@ -63,14 +87,16 @@ async function session() {
 
 async function sameSession(bridge) {
   const now = await session();
-  return now && now.secret === bridge.secret && now.tabId === bridge.tabId && now.mode === bridge.mode;
+  return now && now.secret === bridge.secret && now.tabId === bridge.tabId && now.mode === bridge.mode && now.generation === bridge.generation;
 }
 
-async function setStatus(bridge, patch) {
+async function patchStatus(bridge, patch) {
   if (!await sameSession(bridge)) return;
   const old = (await chrome.storage.session.get('status')).status || {};
   await chrome.storage.session.set({ status: { ...old, ...patch } });
 }
+
+function setStatus(bridge, patch) { return serial(() => patchStatus(bridge, patch)); }
 
 async function currentUsageTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -97,17 +123,23 @@ async function stopCollector(tabId) {
   try { await chrome.tabs.sendMessage(tabId, { type: 'orb:stop' }, { frameId: 0 }); } catch {}
 }
 
-async function invalidate(bridge, message) {
-  if (!await sameSession(bridge)) return;
-  await chrome.storage.session.remove('bridge');
-  await chrome.storage.session.set({ status: { error: message, lastSentAt: null,
-    lastReadAt: null, hasData: false, source: null } });
-  for (const controller of requests) controller.abort();
-  await stopCollector(bridge.tabId);
+async function invalidate(bridge, message, runId = null) {
+  await serial(async () => {
+    if (!await sameSession(bridge) || (runId && !await runContext(runId))) return;
+    await cancelScheduled();
+    await chrome.storage.session.remove('bridge');
+    await chrome.storage.session.set({ status: { error: message, lastSentAt: null,
+      lastReadAt: null, hasData: false, source: null } });
+    for (const controller of requests) controller.abort();
+    await stopCollector(bridge.tabId);
+  });
 }
 
-async function post(snapshot, bridge) {
-  if (!await sameSession(bridge)) return { ok: false, message: '配对已变更，请重新读取。' };
+async function post(snapshot, bridge, runId = null) {
+  const status = patch => serial(async () => {
+    if (!runId || await runContext(runId)) await patchStatus(bridge, patch);
+  });
+  if (!await sameSession(bridge) || (runId && !await runContext(runId))) return { ok: false, message: '配对已变更，请重新读取。' };
   const controller = new AbortController();
   requests.add(controller);
   const seq = ++postSequence;
@@ -122,26 +154,272 @@ async function post(snapshot, bridge) {
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         const message = '配对已失效，已停止读取并清除配对码。请从悬浮球复制新码。';
-        await invalidate(bridge, message);
+        await invalidate(bridge, message, runId);
         return { ok: false, stop: true, message };
       }
       if (response.status === 429) throw new Error('发送过于频繁，请稍后重新读取。');
       throw new Error(`悬浮球未接受这次数据（${response.status}）。`);
     }
-    const hasData = snapshot.windows.length > 0 || snapshot.tokens.total !== null || snapshot.tokens.today !== null;
-    if (seq === postSequence) await setStatus(bridge, { error: '', lastSentAt: Date.now(),
+    const hasData = hasMetrics(snapshot);
+    if (seq === postSequence) await status({ error: '', lastSentAt: Date.now(),
       lastReadAt: snapshot.capturedAt, hasData, source: snapshot.source });
     return { ok: true, hasData };
   } catch (error) {
     const message = error instanceof TypeError || error?.name === 'AbortError'
       ? '无法连接本机悬浮球。请先启动程序；若浏览器询问本地网络权限，请确认目标为 127.0.0.1。'
       : String(error.message || '同步失败。');
-    if (seq === postSequence) await setStatus(bridge, { error: message });
+    if (seq === postSequence) await status({ error: message });
     return { ok: false, message };
   } finally {
     clearTimeout(timeout);
     requests.delete(controller);
   }
+}
+
+// Only numeric preferences are durable. Pairing, enabled state and owned tabs live
+// in storage.session, so a browser restart cannot silently resume account access.
+async function autoState() {
+  return (await chrome.storage.session.get('autoRefresh')).autoRefresh || null;
+}
+
+async function closeOwnedTab(run) {
+  if (!run || !Number.isInteger(run.tabId) || run.claimed || activatedTabs.has(run.tabId)) return;
+  try {
+    const tab = await chrome.tabs.get(run.tabId);
+    // Recheck at cleanup time. Never close a user's active or navigated tab.
+    if (tab.active === false && isUsagePage(tab.url) && !activatedTabs.has(run.tabId)) {
+      await chrome.tabs.remove(run.tabId);
+    }
+  } catch {}
+}
+
+async function cancelScheduled(error = '') {
+  clearTimeout(hydrationTimer);
+  hydrationTimer = null;
+  activeTask = null;
+  const run = (await chrome.storage.session.get('autoRun')).autoRun;
+  const state = await autoState();
+  await chrome.alarms.clear(PERIOD_ALARM);
+  await chrome.alarms.clear(TIMEOUT_ALARM);
+  if (run) await chrome.storage.session.remove('autoRun');
+  if (state) await chrome.storage.session.set({ autoRefresh: { ...state, enabled: false,
+    nextRunAt: null, error } });
+  for (const controller of requests) controller.abort();
+  await closeOwnedTab(run);
+}
+
+async function runContext(id) {
+  const bridge = await session();
+  const state = await autoState();
+  const run = (await chrome.storage.session.get('autoRun')).autoRun;
+  if (!validBridge(bridge) || bridge.mode !== 'scheduled' || !state?.enabled ||
+      !run || run.id !== id || run.generation !== bridge.generation) return null;
+  return { bridge, state, run };
+}
+
+async function updateRun(id, patch) {
+  return serial(async () => {
+    const context = await runContext(id);
+    if (!context) return false;
+    await chrome.storage.session.set({ autoRun: { ...context.run, ...patch } });
+    return true;
+  });
+}
+
+async function finishRun(id, error = '') {
+  await serial(async () => {
+    const context = await runContext(id);
+    if (!context) return;
+    clearTimeout(hydrationTimer);
+    hydrationTimer = null;
+    await chrome.storage.session.remove('autoRun');
+    await chrome.alarms.clear(TIMEOUT_ALARM);
+    for (const controller of requests) controller.abort();
+    await chrome.storage.session.set({ autoRefresh: { ...context.state, error } });
+    if (error) await patchStatus(context.bridge, { error });
+    await closeOwnedTab(context.run);
+  });
+}
+
+async function pauseRun(id, error) {
+  await serial(async () => {
+    const context = await runContext(id);
+    if (!context) return;
+    // Login redirects and user navigation can leave a useful page behind. Stop
+    // the schedule instead of producing a new login/home tab every interval.
+    await chrome.storage.session.set({ autoRun: { ...context.run, claimed: true } });
+    await cancelScheduled(error);
+    const next = { ...context.bridge, mode: 'manual', tabId: null, generation: generation() };
+    await chrome.storage.session.set({ bridge: next });
+    await patchStatus(next, { error });
+  });
+}
+
+async function permitted() { return chrome.permissions.contains(HOST_PERMISSION); }
+
+async function revokeSchedule() {
+  await serial(async () => {
+    const bridge = await session();
+    const state = await autoState();
+    const run = (await chrome.storage.session.get('autoRun')).autoRun;
+    // An explicit stop may deliberately remove the grant immediately after it
+    // stops the schedule. Do not turn that successful action into an error.
+    if (!state?.enabled && bridge?.mode !== 'scheduled' && !run) return;
+    await cancelScheduled('官方网页权限已撤回，定时刷新已停止。');
+    if (bridge?.mode === 'scheduled') await chrome.storage.session.set({
+      bridge: { ...bridge, mode: 'manual', tabId: null, generation: generation() }
+    });
+  });
+}
+
+async function beginRun() {
+  // Called in the control queue, but page and network waits run outside it.
+  const bridge = await session();
+  const state = await autoState();
+  if (!validBridge(bridge) || bridge.mode !== 'scheduled' || !state?.enabled) return;
+  if (!await permitted()) {
+    await cancelScheduled('请重新允许访问官方网页，再启用定时刷新。');
+    await chrome.storage.session.set({ bridge: { ...bridge, mode: 'manual', generation: generation() } });
+    return;
+  }
+  if ((await chrome.storage.session.get('autoRun')).autoRun) return;
+  const now = Date.now();
+  const run = { id: generation(), generation: bridge.generation, tabId: null,
+    claimed: false, phase: 'creating', deadline: now + RUN_TIMEOUT, hydrationUntil: null };
+  await chrome.storage.session.set({ autoRun: run,
+    autoRefresh: { ...state, lastAttemptAt: now, error: '' } });
+  await chrome.alarms.create(TIMEOUT_ALARM, { when: run.deadline });
+  launchRun(run.id, true);
+}
+
+function launchRun(id, allowCreate = false) {
+  if (activeTask?.id === id) return;
+  const task = { id };
+  activeTask = task;
+  // A microtask starts after the queued state mutation has completed.
+  Promise.resolve().then(() => collectRun(id, allowCreate)).catch(() =>
+    finishRun(id, '本轮刷新未完成，已保留上次读数；稍后将按设定间隔重试。')
+  ).finally(() => { if (activeTask === task) activeTask = null; });
+}
+
+function initialNavigation(run, tab) {
+  return run.phase === 'loading' && !run.sawUsagePage && tab.status !== 'complete' &&
+    (!tab.url || tab.url === 'about:blank') && (!tab.pendingUrl || isUsagePage(tab.pendingUrl));
+}
+
+function retryRun(id) {
+  clearTimeout(hydrationTimer);
+  hydrationTimer = setTimeout(() => { hydrationTimer = null; launchRun(id); }, 1000);
+}
+
+async function collectRun(id, allowCreate) {
+  let context = await runContext(id);
+  if (!context) return;
+  if (!await permitted()) { await revokeSchedule(); return; }
+  if (Date.now() >= context.run.deadline) {
+    await finishRun(id, '本轮读取超时，已保留上次读数；请检查官方页面是否需要登录。'); return;
+  }
+  if (!Number.isInteger(context.run.tabId)) {
+    if (!allowCreate) { await finishRun(id, '上次刷新被中断，已保留上次读数；下个周期将重试。'); return; }
+    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+    if (!await runContext(id)) return;
+    const normal = windows.filter(window => window.type === 'normal' && !window.incognito && Number.isInteger(window.id));
+    const window = normal.find(item => item.focused) || normal[0];
+    if (!window) { await finishRun(id, '没有可用的普通浏览器窗口。请打开浏览器后再刷新。'); return; }
+    const tab = await chrome.tabs.create({ windowId: window.id, url: USAGE_URL, active: false });
+    if (!Number.isInteger(tab?.id)) { await finishRun(id, '无法打开后台用量页，已保留上次读数。'); return; }
+    if (!await updateRun(id, { tabId: tab.id, phase: 'loading',
+      claimed: tab.active !== false || activatedTabs.has(tab.id) })) {
+      await closeOwnedTab({ tabId: tab.id, claimed: tab.active !== false }); return;
+    }
+    context = await runContext(id);
+    if (!context) return;
+  }
+  let tab;
+  try { tab = await chrome.tabs.get(context.run.tabId); }
+  catch { await finishRun(id, '后台用量页已关闭，本轮读取已取消。'); return; }
+  if (!await runContext(id)) return;
+  if (initialNavigation(context.run, tab)) { retryRun(id); return; }
+  if (!isUsagePage(tab.url)) {
+    await pauseRun(id, '后台页面已离开用量页，定时刷新已暂停。请在官网完成登录后重新启用。'); return;
+  }
+  if (!context.run.sawUsagePage && !await updateRun(id, { sawUsagePage: true })) return;
+  if (tab.status !== 'complete') {
+    // The alarm is the durable deadline; this short poll also covers an onUpdated
+    // event racing the final microtask of the preceding attempt.
+    retryRun(id);
+    return;
+  }
+  if (!context.run.hydrationUntil) {
+    if (!await updateRun(id, { phase: 'collecting', hydrationUntil: Date.now() + HYDRATION_TIMEOUT })) return;
+  }
+  if (!await runContext(id) || !await permitted()) return;
+  await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] },
+    world: 'ISOLATED', files: ['parser.js'] });
+  if (!await runContext(id)) return;
+  tab = await chrome.tabs.get(tab.id);
+  if (!isUsagePage(tab.url)) { await pauseRun(id, '页面已离开官方用量页，定时刷新已暂停；请确认登录后重新启用。'); return; }
+  const results = await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] },
+    world: 'ISOLATED', func: () => {
+      const parser = globalThis.OrbPageParser;
+      if (!parser?.allowedLocation(location)) return null;
+      return parser.collect(document, location);
+    } });
+  context = await runContext(id);
+  if (!context || !await permitted()) return;
+  tab = await chrome.tabs.get(tab.id);
+  if (!isUsagePage(tab.url) || !await runContext(id)) {
+    await pauseRun(id, '页面已离开官方用量页，定时刷新已暂停；请确认登录后重新启用。'); return;
+  }
+  const result = results?.find(item => item.frameId === 0)?.result;
+  const snapshot = result ? cleanSnapshot(result, 'official-page') : null;
+  if (!snapshot || !hasMetrics(snapshot)) {
+    if (Date.now() >= context.run.hydrationUntil) {
+      await finishRun(id, '未识别到用量数值，已保留上次读数。请检查登录状态或页面布局。'); return;
+    }
+    retryRun(id);
+    return;
+  }
+  if (!await updateRun(id, { phase: 'posting' }) || !await runContext(id)) return;
+  const response = await post(snapshot, context.bridge, id);
+  await finishRun(id, response.ok ? '' : response.message || '本轮同步失败，已保留上次读数。');
+}
+
+async function reconcileSchedule() {
+  await ready;
+  const bridge = await session();
+  const state = await autoState();
+  const run = (await chrome.storage.session.get('autoRun')).autoRun;
+  if (!validBridge(bridge) || bridge.mode !== 'scheduled' || !state?.enabled || !validMinutes(state.minutes)) {
+    if (state?.enabled || run) await cancelScheduled();
+    else {
+      for (const name of [PERIOD_ALARM, TIMEOUT_ALARM]) if (await chrome.alarms.get(name)) await chrome.alarms.clear(name);
+    }
+    return;
+  }
+  if (!await permitted()) {
+    await cancelScheduled('官方网页权限已撤回，定时刷新已停止。');
+    await chrome.storage.session.set({ bridge: { ...bridge, mode: 'manual', tabId: null, generation: generation() } });
+    return;
+  }
+  let alarm = await chrome.alarms.get(PERIOD_ALARM);
+  if (!alarm || alarm.periodInMinutes !== state.minutes) {
+    const nextRunAt = Number.isFinite(state.nextRunAt) && state.nextRunAt > Date.now()
+      ? state.nextRunAt : Date.now() + state.minutes * 60000;
+    await chrome.alarms.create(PERIOD_ALARM, { when: nextRunAt, periodInMinutes: state.minutes });
+    alarm = { scheduledTime: nextRunAt };
+  }
+  if (state.nextRunAt !== alarm.scheduledTime) await chrome.storage.session.set({
+    autoRefresh: { ...state, nextRunAt: alarm.scheduledTime }
+  });
+  if (run && run.generation === bridge.generation && Number.isFinite(run.deadline)) {
+    await chrome.alarms.create(TIMEOUT_ALARM, { when: Math.max(Date.now() + 1000, run.deadline) });
+    launchRun(run.id);
+  } else if (run) {
+    await chrome.storage.session.remove('autoRun');
+    await chrome.alarms.clear(TIMEOUT_ALARM);
+    await closeOwnedTab(run);
+  } else if (await chrome.alarms.get(TIMEOUT_ALARM)) await chrome.alarms.clear(TIMEOUT_ALARM);
 }
 
 async function popupMessage(message) {
@@ -150,27 +428,73 @@ async function popupMessage(message) {
     const status = (await chrome.storage.session.get('status')).status || {};
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabState = usageTabState(tab);
+    const state = await autoState();
+    const local = await chrome.storage.local.get('autoRefreshMinutes');
+    const run = (await chrome.storage.session.get('autoRun')).autoRun;
     return { ok: true, paired: Boolean(bridge), mode: bridge?.mode || null,
+      autoRefresh: { enabled: Boolean(state?.enabled && bridge?.mode === 'scheduled'),
+        minutes: validMinutes(state?.minutes) ? state.minutes : validMinutes(local.autoRefreshMinutes) ? local.autoRefreshMinutes : 5,
+        nextRunAt: state?.nextRunAt || null, lastAttemptAt: state?.lastAttemptAt || null,
+        running: Boolean(run && state?.enabled), error: state?.error || '' },
       tabState, onUsagePage: tabState === 'usage-page', sameTab: Boolean(bridge && bridge.tabId === tab?.id),
       lastSentAt: status.lastSentAt || null, lastReadAt: status.lastReadAt || null,
       hasData: Boolean(status.hasData), source: status.source || null, error: status.error || '' };
+  }
+  if (message.type === 'orb:auto-start') {
+    if (!validMinutes(message.minutes)) throw new Error('刷新间隔应为 1 至 1440 的整数分钟。');
+    const old = await session();
+    let secret = old?.secret;
+    if (message.code !== undefined && message.code !== '') {
+      const match = typeof message.code === 'string' && CODE.exec(message.code.trim());
+      if (!match) throw new Error('配对码格式错误，请从悬浮球重新复制。');
+      secret = match[1];
+    }
+    if (!validBridge({ secret })) throw new Error('请先输入悬浮球的配对码。');
+    if (!await permitted()) throw new Error('请先允许扩展访问官方网页，才能在后台定时刷新。');
+    await cancelScheduled();
+    await stopCollector(old?.tabId);
+    const now = Date.now();
+    const bridge = { secret, tabId: null, mode: 'scheduled', generation: generation() };
+    await chrome.storage.local.set({ autoRefreshMinutes: message.minutes });
+    await chrome.storage.session.set({ bridge, autoRefresh: { enabled: true, minutes: message.minutes,
+      nextRunAt: now + message.minutes * 60000, lastAttemptAt: null, error: '' } });
+    await chrome.alarms.create(PERIOD_ALARM, { when: now + message.minutes * 60000, periodInMinutes: message.minutes });
+    await beginRun();
+    return { ok: true };
+  }
+  if (message.type === 'orb:auto-stop') {
+    const old = await session();
+    await cancelScheduled();
+    if (old?.mode === 'scheduled') await chrome.storage.session.set({
+      bridge: { ...old, mode: 'manual', tabId: null, generation: generation() }
+    });
+    return { ok: true };
+  }
+  if (message.type === 'orb:auto-refresh') {
+    const bridge = await session();
+    if (!validBridge(bridge) || bridge.mode !== 'scheduled' || !(await autoState())?.enabled) {
+      throw new Error('请先启用定时刷新。');
+    }
+    await beginRun();
+    return { ok: true };
   }
   if (message.type === 'orb:start') {
     const match = typeof message.code === 'string' && CODE.exec(message.code.trim());
     if (!match) throw new Error('配对码格式错误，请从悬浮球重新复制。');
     const tab = await currentUsageTab();
     const old = await session();
+    await cancelScheduled();
     await stopCollector(old?.tabId);
-    for (const controller of requests) controller.abort();
-    const bridge = { secret: match[1], tabId: tab.id, mode: 'automatic' };
+    const bridge = { secret: match[1], tabId: tab.id, mode: 'automatic', generation: generation() };
     await chrome.storage.session.set({ bridge, status: { error: '', lastSentAt: null,
       lastReadAt: null, hasData: false, source: null } });
     try { await inject(tab.id); }
-    catch { await setStatus(bridge, { error: '无法读取该页面。请刷新官方用量页，再点击“重新读取页面”。' }); throw new Error('无法读取该页面，请刷新官方用量页后重试。'); }
+    catch { await patchStatus(bridge, { error: '无法读取该页面。请刷新官方用量页，再点击“重新读取页面”。' }); throw new Error('无法读取该页面，请刷新官方用量页后重试。'); }
     return { ok: true };
   }
   if (message.type === 'orb:stop') {
     const old = await session();
+    await cancelScheduled();
     await chrome.storage.session.remove(['bridge', 'status']);
     ++postSequence;
     for (const controller of requests) controller.abort();
@@ -181,9 +505,10 @@ async function popupMessage(message) {
     const bridge = await session();
     if (!bridge) throw new Error('请先输入悬浮球的配对码。');
     const tab = await currentUsageTab();
+    await cancelScheduled();
     if (tab.id !== bridge.tabId) await stopCollector(bridge.tabId);
     for (const controller of requests) controller.abort();
-    const next = { ...bridge, tabId: tab.id, mode: 'automatic' };
+    const next = { ...bridge, tabId: tab.id, mode: 'automatic', generation: generation() };
     await chrome.storage.session.set({ bridge: next });
     await inject(tab.id);
     return { ok: true };
@@ -196,11 +521,11 @@ async function popupMessage(message) {
     if (!snapshot.windows.length && snapshot.tokens.total === null && snapshot.tokens.today === null) {
       throw new Error('请至少输入一个页面显示的数值。');
     }
+    await cancelScheduled();
     await stopCollector(bridge.tabId);
-    for (const controller of requests) controller.abort();
-    const next = { ...bridge, tabId: tab.id, mode: 'manual' };
+    const next = { ...bridge, tabId: tab.id, mode: 'manual', generation: generation() };
     await chrome.storage.session.set({ bridge: next });
-    return await post(snapshot, next);
+    return { deferred: () => post(snapshot, next) };
   }
   throw new Error('不支持的操作。');
 }
@@ -228,24 +553,84 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (sender.origin === undefined || sender.origin === `chrome-extension://${chrome.runtime.id}`);
   let work;
   if (fromPopup && message.type !== 'orb:status') {
-    work = controls.then(() => popupMessage(message));
-    controls = work.catch(() => {});
+    work = serial(() => popupMessage(message));
   } else {
-    work = fromPopup ? popupMessage(message) : contentMessage(message, sender);
+    work = controls.then(() => fromPopup ? popupMessage(message) : contentMessage(message, sender));
   }
-  work.then(sendResponse).catch(error => sendResponse({ ok: false, message: String(error.message || '操作失败。') }));
+  work.then(result => result?.deferred ? result.deferred() : result).then(sendResponse).catch(error => sendResponse({ ok: false, message: String(error.message || '操作失败。') }));
   return true;
 });
 
-chrome.tabs.onRemoved.addListener(async tabId => {
-  const bridge = await session();
-  if (bridge?.tabId === tabId) await setStatus(bridge, { error: '官方用量页已关闭。重新打开后点击“重新读取页面”。' });
+chrome.tabs.onRemoved.addListener(tabId => {
+  serial(async () => {
+    const run = (await chrome.storage.session.get('autoRun')).autoRun;
+    if (run?.tabId === tabId) return { runId: run.id };
+    const bridge = await session();
+    if (bridge?.tabId === tabId) await patchStatus(bridge, { error: '官方用量页已关闭。重新打开后点击“重新读取页面”。' });
+  }).then(result => { if (result) return finishRun(result.runId, '后台用量页已关闭，本轮读取已取消。'); }).catch(() => {});
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, change) => {
-  if (!change.url) return;
-  const bridge = await session();
-  if (bridge?.tabId !== tabId || isUsagePage(change.url)) return;
-  await stopCollector(tabId);
-  await setStatus(bridge, { error: '已离开官方用量页，自动读取已停止。' });
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  serial(async () => {
+    const run = (await chrome.storage.session.get('autoRun')).autoRun;
+    if (run?.tabId === tabId) {
+      if (change.url && !isUsagePage(change.url)) {
+        let tab;
+        try { tab = await chrome.tabs.get(tabId); } catch { return { cancel: run.id }; }
+        if (initialNavigation(run, tab)) return;
+        // A navigation event permanently relinquishes ownership, even if the
+        // user immediately returns to the usage route before cleanup runs.
+        await chrome.storage.session.set({ autoRun: { ...run, claimed: true } });
+        for (const controller of requests) controller.abort();
+        return { pause: run.id };
+      }
+      if (change.status === 'complete') return { resume: run.id };
+    }
+    if (!change.url) return;
+    const bridge = await session();
+    if (bridge?.tabId !== tabId || isUsagePage(change.url)) return;
+    await stopCollector(tabId);
+    await patchStatus(bridge, { error: '已离开官方用量页，自动读取已停止。' });
+  }).then(result => {
+    if (result?.pause) return pauseRun(result.pause, '后台页面已离开用量页，定时刷新已暂停。请在官网完成登录后重新启用。');
+    if (result?.cancel) return finishRun(result.cancel, '后台用量页已关闭，本轮读取已取消。');
+    if (result?.resume) launchRun(result.resume);
+  }).catch(() => {});
 });
+
+chrome.tabs.onActivated.addListener(info => {
+  activatedTabs.add(info.tabId);
+  // Only a currently owned tab can become relevant to cleanup. Retain a small
+  // recent set to cover activation between tabs.create and its session write.
+  if (activatedTabs.size > 256) activatedTabs.delete(activatedTabs.values().next().value);
+  serial(async () => {
+    const run = (await chrome.storage.session.get('autoRun')).autoRun;
+    if (run?.tabId === info.tabId) await chrome.storage.session.set({ autoRun: { ...run, claimed: true } });
+  }).catch(() => {});
+});
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === PERIOD_ALARM) {
+    serial(async () => {
+      const state = await autoState();
+      if (!state?.enabled) { await chrome.alarms.clear(PERIOD_ALARM); return; }
+      const nextRunAt = Date.now() + state.minutes * 60000;
+      await chrome.storage.session.set({ autoRefresh: { ...state, nextRunAt } });
+      await beginRun();
+    }).catch(() => {});
+  } else if (alarm.name === TIMEOUT_ALARM) {
+    serial(async () => (await chrome.storage.session.get('autoRun')).autoRun).then(run => {
+      if (!run) return;
+      if (Date.now() >= run.deadline) return finishRun(run.id, '本轮读取超时，已保留上次读数；请检查官方页面是否需要登录。');
+      launchRun(run.id);
+    }).catch(() => {});
+  }
+});
+
+chrome.permissions.onRemoved.addListener(() => {
+  permitted().then(granted => { if (!granted) return revokeSchedule(); }).catch(() => {});
+});
+
+// Reconcile on every service-worker load, including after an idle termination.
+// A browser restart empties storage.session; persisted alarms are then removed.
+serial(reconcileSchedule).catch(() => {});

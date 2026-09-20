@@ -78,10 +78,10 @@
     $('footer-dot').classList.toggle('stale', hasSnapshot && (isStale || isManual || !!state.error));
     setText('source-badge', isManual ? '人工记录' : isStale ? '上次记录' : hasSnapshot ? '页面记录' : '待配对');
     setText('source-description', isManual ? '手动录入官方页面所示数值' : hasSnapshot ? '仅同步官方页面明确显示的用量数字' : '登录留在官方网页，用量留在桌面');
-    const note = isManual ? '当前是人工记录，不会自动反映账号用量变化。' : isStale ? '超过 3 分钟未读取到页面。当前显示上次记录，请检查浏览器中的官方用量页。' : state.error && hasSnapshot ? '同步遇到问题，当前显示上次页面记录。' : '';
+    const note = isManual ? '当前是人工记录，不会自动反映账号用量变化。' : isStale ? '上次成功读取已超过 3 分钟，当前显示历史记录。后台刷新间隔较长时也会出现此提示；可在浏览器扩展中查看下次刷新时间或错误。' : state.error && hasSnapshot ? '同步遇到问题，当前显示上次页面记录。' : '';
     setText('freshness-note', note);
     hidden('freshness-note', !note);
-    let status = state.status === 'starting' ? '正在启动本机同步' : state.error ? '同步异常' : !state.bridge?.listening ? '本机同步尚未启动' : !hasSnapshot ? '等待本机配对' : isManual ? '人工记录 · 请按需更新' : isStale ? '页面读取已超时' : '正在接收页面记录';
+    let status = state.status === 'starting' ? '正在启动本机同步' : state.error ? '同步异常' : !state.bridge?.listening ? '本机同步尚未启动' : !hasSnapshot ? '等待本机配对' : isManual ? '人工记录 · 请按需更新' : isStale ? '显示上次读取记录' : '正在接收页面记录';
     setText('sync-status', status);
     const canPair = !!state.bridge?.listening;
     for (const id of ['pair-button', 'pair-settings-button']) $(id).disabled = !canPair;
@@ -98,7 +98,7 @@
   function renderUpdates() {
     const updates = state.updates || {};
     const status = updates.status || 'unconfigured';
-    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.1.3';
+    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.2.0';
     const availableVersion = typeof updates.availableVersion === 'string' ? updates.availableVersion : '';
     const messages = {
       unconfigured: '更新源尚未启用',

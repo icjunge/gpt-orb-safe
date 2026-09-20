@@ -4,6 +4,10 @@ let busy = false;
 let reloadRequested = false;
 let renderSequence = 0;
 let statusRequests = 0;
+let lastState = null;
+let minutesInitialized = false;
+let minutesEdited = false;
+const AUTO_ORIGINS = { origins: ['https://chatgpt.com/*'] };
 
 function runtimeAvailable() {
   try {
@@ -24,6 +28,32 @@ function renderPairingControls() {
   $('code').disabled = disabled;
   $('start').disabled = disabled;
   $('start').textContent = busy ? '正在处理…' : '连接并开始读取';
+}
+
+function renderAutoControls(state = lastState) {
+  const disabled = busy || reloadRequested || !runtimeAvailable();
+  const settings = state?.autoRefresh;
+  const permissionAPI = typeof globalThis.chrome?.permissions?.request === 'function';
+  $('auto-minutes').disabled = disabled;
+  $('auto-enable').disabled = disabled || !permissionAPI;
+  $('auto-enable').textContent = settings?.enabled ? '保存刷新间隔' : '开启后台刷新';
+  $('auto-now').disabled = disabled || !settings?.enabled || !!settings?.running;
+  // Keep revocation available even if an earlier enable failed after the grant.
+  $('auto-disable').disabled = disabled || typeof globalThis.chrome?.permissions?.remove !== 'function';
+  if (state && !minutesInitialized && !minutesEdited) {
+    $('auto-minutes').value = String(Number.isInteger(settings?.minutes) ? settings.minutes : 5);
+    minutesInitialized = true;
+  }
+  if (!settings?.enabled) {
+    $('auto-status').textContent = settings?.error || '尚未开启。后台刷新需要浏览器的网站访问授权。';
+  } else {
+    const parts = [`每 ${settings.minutes} 分钟刷新`];
+    if (settings.running) parts.push('正在读取后台用量页');
+    if (settings.nextRunAt) parts.push(`下次约 ${time(settings.nextRunAt)}`);
+    if (state.lastReadAt) parts.push(`上次成功读取 ${time(state.lastReadAt)}`);
+    if (settings.error) parts.push(settings.error);
+    $('auto-status').textContent = parts.join(' · ');
+  }
 }
 
 function reloadAvailable() {
@@ -82,22 +112,37 @@ async function render() {
   const sequence = ++renderSequence;
   if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
   renderPairingControls();
+  renderAutoControls();
   renderReload();
   ++statusRequests;
   try {
     const state = await send({ type: 'orb:status' });
     if (sequence !== renderSequence || reloadRequested) return;
     if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
+    lastState = state;
     $('setup-help').hidden = true;
     document.querySelectorAll('input').forEach(element => {
-      if (element.id !== 'code') element.disabled = busy || !state.onUsagePage;
+      if (element.id !== 'code' && element.id !== 'auto-minutes') element.disabled = busy || !state.onUsagePage;
     });
     renderPairingControls();
+    renderAutoControls(state);
     $('refresh').disabled = busy || !state.paired || !state.onUsagePage;
     $('stop').disabled = busy || !state.paired;
     $('manual-send').disabled = busy || !state.paired || !state.onUsagePage;
     $('light').className = '';
-    if (!state.onUsagePage) {
+    if (state.autoRefresh?.enabled) {
+      const problem = state.autoRefresh.error || state.error;
+      $('status').textContent = problem ? '后台刷新需要处理' : state.autoRefresh.running ? '正在后台刷新' : '后台定时刷新已开启';
+      $('light').className = problem ? 'warn' : state.lastSentAt ? 'live' : '';
+      $('detail').textContent = problem || '无需保持用量页打开。扩展会按间隔临时打开用量页，读取后关闭；登录由浏览器保管。';
+    } else if (state.autoRefresh?.error) {
+      $('status').textContent = '后台刷新已暂停';
+      $('light').className = 'warn';
+      $('detail').textContent = state.autoRefresh.error;
+    } else if (state.paired && state.mode === 'manual' && state.source !== 'manual-page') {
+      $('status').textContent = '自动读取已暂停';
+      $('detail').textContent = '上次读数已保留。可以重新开启后台刷新，或回到用量页点击“重新读取页面”。';
+    } else if (!state.onUsagePage) {
       if (state.tabState === 'url-unavailable') {
         $('status').textContent = '尚未获得当前页授权';
         $('detail').textContent = '可以输入配对码。请在官方用量页点击浏览器工具栏的扩展图标，再连接；单独打开扩展页面不会授予读取权限。';
@@ -136,6 +181,7 @@ async function render() {
     if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
     disableControls();
     renderPairingControls();
+    renderAutoControls();
     renderReload();
     $('setup-help').hidden = false;
     $('light').className = 'warn';
@@ -152,6 +198,7 @@ async function act(work) {
   $('message').textContent = '';
   disableControls();
   renderPairingControls();
+  renderAutoControls();
   renderReload();
   try { await work(); }
   catch (error) { $('message').textContent = String(error.message || '操作失败。'); }
@@ -172,6 +219,64 @@ $('stop').addEventListener('click', () => act(async () => {
   await send({ type: 'orb:stop' });
 }));
 
+$('auto-minutes').addEventListener('input', () => { minutesEdited = true; });
+$('auto-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
+  if (busy || reloadRequested) return;
+  const minutes = Number($('auto-minutes').value);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    $('message').textContent = '刷新间隔请输入 1–1440 的整数分钟。';
+    return;
+  }
+  const code = $('code').value.trim();
+  if (code && !/^GPTORB2\.43861\.[A-Za-z0-9_-]{43}$/.test(code)) {
+    $('message').textContent = '配对码格式错误，请从悬浮球重新复制。';
+    return;
+  }
+  if (!code && !lastState?.paired) {
+    $('message').textContent = '请先在上方粘贴悬浮球的当前配对码，再开启后台刷新。';
+    return;
+  }
+  if (typeof globalThis.chrome.permissions?.request !== 'function') {
+    $('message').textContent = '浏览器的网站授权接口不可用，请在扩展管理页重新加载后重试。';
+    return;
+  }
+  let grant;
+  try {
+    // Request directly in the submit gesture, before any await or worker call.
+    grant = globalThis.chrome.permissions.request(AUTO_ORIGINS);
+  } catch {
+    $('message').textContent = '无法申请后台网站访问权限，请重新点击开启。';
+    return;
+  }
+  $('code').value = '';
+  act(async () => {
+    let allowed;
+    try { allowed = await grant; }
+    catch { throw new Error('网站访问授权未完成，后台刷新未开启。'); }
+    if (!allowed) throw new Error('未授予网站访问权限，后台刷新未开启。仍可使用当前页面同步。');
+    if (reloadRequested || !runtimeAvailable()) return;
+    await send({ type: 'orb:auto-start', minutes, ...(code ? { code } : {}) });
+    $('message').textContent = '已开启后台刷新，正在尝试首次读取。可以关闭原来的用量页。';
+  });
+});
+$('auto-now').addEventListener('click', () => act(async () => {
+  await send({ type: 'orb:auto-refresh' });
+  $('message').textContent = '已请求后台刷新，请查看上次成功读取时间。';
+}));
+$('auto-disable').addEventListener('click', () => act(async () => {
+  let stopFailed = false;
+  try { await send({ type: 'orb:auto-stop' }); }
+  catch { stopFailed = true; }
+  let removed;
+  try { removed = await globalThis.chrome.permissions.remove(AUTO_ORIGINS); }
+  catch { throw new Error('撤销网站授权失败。请在浏览器扩展管理页取消网站访问权限，并重新加载扩展。'); }
+  if (!removed) throw new Error('未能确认网站授权已撤销。请在扩展管理页检查网站访问权限。');
+  if (stopFailed) throw new Error('已撤销后台网站授权，但后台状态未能确认，请重新加载扩展。');
+  $('message').textContent = '后台刷新已关闭，已撤销后台网站授权。上次读数仍会保留。';
+}));
+
 // This local user gesture is the only reload trigger. The desktop bridge and
 // content scripts cannot request updates or execute newly fetched JavaScript.
 $('reload-extension').addEventListener('click', () => {
@@ -185,6 +290,7 @@ $('reload-extension').addEventListener('click', () => {
   catch {
     reloadRequested = false;
     renderPairingControls();
+    renderAutoControls();
     renderReload();
     $('message').textContent = '无法重新加载，请在浏览器扩展管理页点击“重新加载”。';
   }

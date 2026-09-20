@@ -44,8 +44,9 @@ async function verify(evaluate, engine) {
   });
   check('stable extension identity and narrow manifest', () => {
     assert.equal(runtime.id, identity.id);
-    assert.deepEqual([...runtime.manifest.permissions].sort(), ['activeTab', 'scripting', 'storage'].sort());
+    assert.deepEqual([...runtime.manifest.permissions].sort(), ['activeTab', 'scripting', 'storage', 'alarms'].sort());
     assert.deepEqual(runtime.manifest.host_permissions, ['http://127.0.0.1/*']);
+    assert.deepEqual(runtime.manifest.optional_host_permissions, ['https://chatgpt.com/*']);
     assert.equal(runtime.manifest.externally_connectable, undefined);
   });
   // `ready` resolves only after the real chrome.storage.session API accepts

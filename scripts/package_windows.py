@@ -93,10 +93,17 @@ def verify_extension() -> None:
     expected_id = "".join(chr(ord("a") + int(character, 16)) for character in hashlib.sha256(key_bytes).hexdigest()[:32])
     if identity["id"] != expected_id:
         raise RuntimeError("Extension public key does not match its fixed ID")
-    if set(manifest.get("permissions", [])) != {"activeTab", "scripting", "storage"}:
+    expected_keys = {"manifest_version", "name", "version", "minimum_chrome_version",
+                     "description", "key", "permissions", "host_permissions", "optional_host_permissions",
+                     "background", "action", "content_security_policy"}
+    if set(manifest) != expected_keys:
+        raise RuntimeError("Unexpected extension manifest schema")
+    if manifest.get("permissions", []) != ["activeTab", "scripting", "storage", "alarms"]:
         raise RuntimeError("Unexpected extension permission")
     if manifest.get("host_permissions", []) != ["http://127.0.0.1/*"]:
         raise RuntimeError("Unexpected extension host permission")
+    if manifest.get("optional_host_permissions", []) != ["https://chatgpt.com/*"]:
+        raise RuntimeError("Unexpected optional extension host permission")
     if manifest.get("externally_connectable") or manifest.get("web_accessible_resources"):
         raise RuntimeError("Unexpected externally exposed extension resource")
 

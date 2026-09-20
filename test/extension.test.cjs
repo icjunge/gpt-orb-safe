@@ -31,7 +31,7 @@ function harness() {
   const chrome = {
     runtime: { id: ID, getURL: file => `chrome-extension://${ID}/${file}`,
       onMessage: { addListener: fn => { handler = fn; } } },
-    storage: { session: {
+    storage: { local: { get: async () => ({}), set: async () => {} }, session: {
       setAccessLevel: async value => { access.push(value); },
       get: async key => ({ [key]: data[key] === undefined ? undefined : structuredClone(data[key]) }),
       set: async values => { mutations.push('set'); Object.assign(data, structuredClone(values)); },
@@ -39,7 +39,9 @@ function harness() {
     } },
     tabs: { query: async () => state.tab ? [structuredClone(state.tab)] : [], get: async () => structuredClone(state.tab),
       sendMessage: async (...args) => { stops.push(args); },
-      onRemoved: { addListener() {} }, onUpdated: { addListener() {} } },
+      onRemoved: { addListener() {} }, onUpdated: { addListener() {} }, onActivated: { addListener() {} } },
+    permissions: { contains: async () => false, onRemoved: { addListener() {} } },
+    alarms: { clear: async () => false, get: async () => undefined, create: async () => {}, onAlarm: { addListener() {} } },
     scripting: { executeScript: async value => { injections.push(value); } }
   };
   const context = vm.createContext({ chrome, URL, AbortController, setTimeout, clearTimeout,
@@ -333,9 +335,11 @@ test('desktop restart or disconnect invalidates the code and halts further trans
   assert.equal(h.requests.length, 1);
 });
 
-test('manifest grants no account, cookie, persistent web host or external messaging access', () => {
+test('manifest requires no account credentials and makes official-page host access opt-in', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../extension/manifest.json'), 'utf8'));
-  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
+  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage', 'alarms']);
+  assert.deepEqual(manifest.optional_host_permissions, ['https://chatgpt.com/*']);
+  assert.equal(manifest.permissions.some(permission => ['tabs', 'cookies', 'webRequest'].includes(permission)), false);
   assert.deepEqual(manifest.host_permissions, ['http://127.0.0.1/*']);
   assert.equal(manifest.externally_connectable, undefined);
   assert.equal(manifest.web_accessible_resources, undefined);

@@ -16,12 +16,19 @@ function sameKeys(value, keys) {
 }
 
 function validateManifest(manifest) {
-  if (!sameKeys(manifest, ['manifest_version', 'name', 'version', 'minimum_chrome_version',
-    'description', 'key', 'permissions', 'host_permissions', 'background', 'action', 'content_security_policy'])
+  const baseKeys = ['manifest_version', 'name', 'version', 'minimum_chrome_version',
+    'description', 'key', 'permissions', 'host_permissions', 'background', 'action', 'content_security_policy'];
+  // Both complete schemas are intentional: an existing legacy bundle must be
+  // readable to preserve it during migration. Mixed or broader grants fail.
+  const legacy = sameKeys(manifest, baseKeys)
+    && JSON.stringify(manifest.permissions) === JSON.stringify(['activeTab', 'scripting', 'storage']);
+  const scheduled = sameKeys(manifest, [...baseKeys, 'optional_host_permissions'])
+    && JSON.stringify(manifest.permissions) === JSON.stringify(['activeTab', 'scripting', 'storage', 'alarms'])
+    && JSON.stringify(manifest.optional_host_permissions) === JSON.stringify(['https://chatgpt.com/*']);
+  if ((!legacy && !scheduled)
     || manifest.manifest_version !== 3 || manifest.key !== identity.publicKey
     || !/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(manifest.version)
     || manifest.version.split('.').some(part => Number(part) > 65535)
-    || JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'storage'])
     || JSON.stringify(manifest.host_permissions) !== JSON.stringify(['http://127.0.0.1/*'])
     || !sameKeys(manifest.background, ['service_worker']) || manifest.background.service_worker !== 'sw.js'
     || !sameKeys(manifest.action, ['default_popup', 'default_title']) || manifest.action.default_popup !== 'popup.html'

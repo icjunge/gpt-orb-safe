@@ -12,7 +12,8 @@ const PAIRING_CODE = `GPTORB2.43861.${'A'.repeat(43)}`;
 const html = fs.readFileSync(path.join(__dirname, '../extension/popup.html'), 'utf8');
 const source = fs.readFileSync(path.join(__dirname, '../extension/popup.js'), 'utf8');
 const controls = ['code', 'start', 'refresh', 'stop', 'manual-send', 'session-used',
-  'weekly-used', 'session-reset', 'weekly-reset', 'total-tokens', 'today-tokens', 'reload-extension'];
+  'weekly-used', 'session-reset', 'weekly-reset', 'total-tokens', 'today-tokens', 'reload-extension',
+  'auto-minutes', 'auto-enable', 'auto-now', 'auto-disable'];
 
 function healthy(overrides = {}) {
   return { ok: true, paired: true, onUsagePage: true, sameTab: true, mode: 'automatic',
@@ -44,6 +45,8 @@ function harness(options = {}) {
   // release to demonstrate that these regressions fail before the implementation fix.
   if (!nodes.has('setup-help')) nodes.set('setup-help', element('setup-help', 'section', 'hidden'));
   const calls = [];
+  const permissionCalls = [];
+  const events = [];
   let reloadCalls = 0;
   const intervals = new Map();
   const timeouts = new Map();
@@ -51,10 +54,23 @@ function harness(options = {}) {
   let nextTimeout = 0;
   let transport = options.transport || (async () => healthy());
   const runtime = { id: ID, reload() { reloadCalls++; }, async sendMessage(message) {
+    events.push(message.type);
     calls.push(structuredClone(message));
     return transport(message);
   } };
-  const chrome = Object.hasOwn(options, 'chrome') ? options.chrome : { runtime };
+  const permissions = {
+    request(value) {
+      events.push('permission-request');
+      permissionCalls.push({ type: 'request', value: structuredClone(value) });
+      return options.requestPermission ? options.requestPermission(value) : Promise.resolve(true);
+    },
+    remove(value) {
+      events.push('permission-remove');
+      permissionCalls.push({ type: 'remove', value: structuredClone(value) });
+      return options.removePermission ? options.removePermission(value) : Promise.resolve(true);
+    }
+  };
+  const chrome = Object.hasOwn(options, 'chrome') ? options.chrome : { runtime, permissions };
   const document = {
     getElementById(id) {
       assert.ok(nodes.has(id), `Unexpected element requested: ${id}`);
@@ -75,7 +91,7 @@ function harness(options = {}) {
     clearTimeout(id) { timeouts.delete(id); }
   });
   vm.runInContext(source, context, { filename: 'popup.js' });
-  return { context, calls, intervals, node: id => document.getElementById(id),
+  return { context, calls, permissionCalls, events, intervals, node: id => document.getElementById(id),
     reloadCalls: () => reloadCalls,
     setTransport(fn) { transport = fn; },
     async expireTimers(delay) {
@@ -275,6 +291,127 @@ test('a stale status response cannot overwrite a newer pairing result or entered
   assert.match(h.node('status').textContent, /正在同步/);
   assert.equal(h.node('code').value, 'NEW_LOCAL_INPUT');
   assert.equal(h.node('code').disabled, false);
+});
+
+test('background refresh requests only the official origin in the gesture, then passes the code once', async () => {
+  let grant;
+  const h = harness({ requestPermission: () => new Promise(resolve => { grant = resolve; }),
+    transport: async message => message.type === 'orb:status'
+      ? healthy({ paired: false, onUsagePage: false, autoRefresh: { enabled: false, minutes: 5 } })
+      : { ok: true } });
+  await flush();
+  assert.equal(h.permissionCalls.length, 0, 'Opening or polling the popup cannot request permissions');
+  assert.equal(h.node('auto-minutes').disabled, false);
+  h.node('auto-minutes').value = '17';
+  h.node('code').value = PAIRING_CODE;
+  const count = h.calls.length;
+  h.node('auto-form').dispatch('submit');
+  assert.deepEqual(h.permissionCalls, [{ type: 'request', value: { origins: ['https://chatgpt.com/*'] } }]);
+  assert.equal(h.calls.length, count, 'No worker await or request before the permission prompt');
+  assert.equal(h.node('code').value, '');
+  grant(true);
+  await flush();
+  assert.deepEqual(h.calls.filter(m => m.type === 'orb:auto-start'), [
+    { type: 'orb:auto-start', minutes: 17, code: PAIRING_CODE }
+  ]);
+  assert.equal(h.visibleText().includes(PAIRING_CODE), false);
+});
+
+test('denied optional permission leaves the current-page mode available and does not enable a schedule', async () => {
+  const h = harness({ requestPermission: async () => false });
+  await flush();
+  h.node('auto-form').dispatch('submit');
+  await flush();
+  assert.equal(h.calls.some(m => m.type.startsWith('orb:auto-')), false);
+  assert.match(h.node('message').textContent, /未授予.*未开启/);
+  assert.equal(h.node('code').disabled, false);
+  assert.equal(h.node('start').disabled, false);
+});
+
+test('invalid interval, malformed code or missing pairing are rejected before requesting permissions', async () => {
+  const h = harness({ transport: async () => healthy({ paired: false }) });
+  await flush();
+  h.node('code').value = PAIRING_CODE;
+  for (const value of ['', '0', '-1', '1.5', '1441', 'not-a-number']) {
+    h.node('auto-minutes').value = value;
+    h.node('auto-form').dispatch('submit');
+    await flush();
+    assert.match(h.node('message').textContent, /整数分钟/);
+  }
+  h.node('auto-minutes').value = '5';
+  h.node('code').value = 'an-account-token-is-not-a-pairing-code';
+  h.node('auto-form').dispatch('submit');
+  await flush();
+  assert.match(h.node('message').textContent, /配对码格式错误/);
+  h.node('code').value = '';
+  h.node('auto-form').dispatch('submit');
+  await flush();
+  assert.match(h.node('message').textContent, /先在上方粘贴/);
+  assert.equal(h.permissionCalls.length, 0);
+  assert.equal(h.calls.some(m => m.type.startsWith('orb:auto-')), false);
+});
+
+test('scheduled status remains meaningful with the usage tab closed and does not overwrite interval edits', async () => {
+  const h = harness({ transport: async () => healthy({ onUsagePage: false,
+    autoRefresh: { enabled: true, minutes: 30, nextRunAt: Date.now() + 1800000, running: false, error: '' } }) });
+  await flush();
+  assert.equal(h.node('status').textContent, '后台定时刷新已开启');
+  assert.match(h.node('auto-status').textContent, /每 30 分钟刷新.*下次约.*上次成功读取/);
+  assert.equal(h.node('auto-minutes').value, '30');
+  assert.equal(h.node('auto-now').disabled, false);
+  h.node('auto-minutes').value = '45';
+  h.node('auto-minutes').dispatch('input');
+  await h.poll();
+  assert.equal(h.node('auto-minutes').value, '45');
+  h.node('auto-now').dispatch('click');
+  await flush();
+  assert.equal(h.calls.filter(m => m.type === 'orb:auto-refresh').length, 1);
+  assert.equal(h.permissionCalls.length, 0);
+});
+
+test('explicit disable revokes background site access even if the worker cannot confirm stopping', async () => {
+  for (const failStop of [false, true]) {
+    const h = harness({ transport: async message => {
+      if (message.type === 'orb:auto-stop') {
+        if (failStop) throw new Error('Worker unavailable');
+        return { ok: true };
+      }
+      return healthy();
+    } });
+    await flush();
+    h.node('auto-disable').dispatch('click');
+    await flush();
+    assert.equal(h.calls.filter(m => m.type === 'orb:auto-stop').length, 1);
+    assert.deepEqual(h.permissionCalls, [{ type: 'remove', value: { origins: ['https://chatgpt.com/*'] } }]);
+    assert.match(h.node('message').textContent, failStop ? /已撤销.*状态未能确认/ : /刷新已关闭.*撤销/);
+  }
+});
+
+test('runtime invalidation or reload during the permission prompt cannot start background reading', async () => {
+  for (const invalidate of [false, true]) {
+    let grant;
+    const h = harness({ requestPermission: () => new Promise(resolve => { grant = resolve; }) });
+    await flush();
+    h.node('auto-form').dispatch('submit');
+    if (invalidate) delete h.context.chrome.runtime;
+    else h.node('reload-extension').dispatch('click');
+    grant(true);
+    await flush();
+    assert.equal(h.calls.some(m => m.type === 'orb:auto-start'), false);
+    assert.equal(h.node('code').value, '');
+  }
+});
+
+test('ordinary file pages cannot request background permission even with a supplied runtime', async () => {
+  const h = harness({ url: 'file:///C:/Browser-Extension/popup.html' });
+  await flush();
+  h.node('auto-minutes').value = '5';
+  h.node('code').value = PAIRING_CODE;
+  h.node('auto-form').dispatch('submit');
+  await flush();
+  assert.equal(h.permissionCalls.length, 0);
+  assert.equal(h.calls.length, 0);
+  assertDisabled(h);
 });
 
 test('explicit reload works while unpaired and does not send a command or persist a pairing code', async () => {

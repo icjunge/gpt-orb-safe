@@ -45,14 +45,14 @@ test('a new release swaps complete bundles and keeps one complete previous versi
   const f = await fixture(t);
   await syncExtension(f);
   const old = await bytes(f.target);
-  await changeManifest(f.sourceDir, { version: '2.2.0' });
+  await changeManifest(f.sourceDir, { version: '2.3.0' });
   await fs.appendFile(path.join(f.sourceDir, 'popup.js'), '\n// synthetic release\n');
   const updated = await syncExtension(f);
-  assert.equal(updated.version, '2.2.0');
+  assert.equal(updated.version, '2.3.0');
   assert.equal(updated.changed, true);
   assert.deepEqual(await bytes(f.target), await bytes(f.sourceDir));
   assert.deepEqual(await bytes(path.join(f.userData, 'Browser-Extension.previous')), old);
-  await changeManifest(f.sourceDir, { version: '2.3.0' });
+  await changeManifest(f.sourceDir, { version: '2.4.0' });
   await syncExtension(f);
   assert.deepEqual((await fs.readdir(f.userData)).sort(), ['Browser-Extension', 'Browser-Extension.previous']);
 });
@@ -61,7 +61,7 @@ test('a browser lock during replacement restores the previous complete extension
   const f = await fixture(t);
   const first = await syncExtension(f);
   const old = await bytes(f.target);
-  await changeManifest(f.sourceDir, { version: '2.2.0' });
+  await changeManifest(f.sourceDir, { version: '2.3.0' });
   const rename = fs.rename;
   t.mock.method(fs, 'rename', async (from, to) => {
     if (from.includes('.Browser-Extension-stage-') && to === f.target) {
@@ -88,6 +88,37 @@ test('opening an older app cannot silently downgrade the shared installed extens
   assert.deepEqual(await bytes(f.target), old);
 });
 
+test('a legacy installed bundle migrates to scheduled permissions and remains intact in backup', async t => {
+  const f = await fixture(t);
+  const nextManifest = JSON.parse(await fs.readFile(path.join(f.sourceDir, 'manifest.json'), 'utf8'));
+  await changeManifest(f.sourceDir, {
+    version: '2.1.3', permissions: ['activeTab', 'scripting', 'storage'], optional_host_permissions: undefined
+  });
+  const first = await syncExtension(f);
+  assert.equal(first.error, undefined);
+  const legacy = await bytes(f.target);
+  await changeManifest(f.sourceDir, nextManifest);
+  const result = await syncExtension(f);
+  assert.equal(result.version, nextManifest.version);
+  assert.equal(result.changed, true);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(await bytes(f.target), await bytes(f.sourceDir));
+  assert.deepEqual(await bytes(path.join(f.userData, 'Browser-Extension.previous')), legacy);
+});
+
+test('legacy source cannot overwrite a scheduled installed bundle', async t => {
+  const f = await fixture(t);
+  await syncExtension(f);
+  const scheduled = await bytes(f.target);
+  await changeManifest(f.sourceDir, {
+    version: '2.1.1', permissions: ['activeTab', 'scripting', 'storage'], optional_host_permissions: undefined
+  });
+  const result = await syncExtension(f);
+  assert.equal(result.changed, false);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(await bytes(f.target), scheduled);
+});
+
 test('an interrupted directory swap recovers the preserved prior bundle before continuing', async t => {
   const f = await fixture(t);
   const first = await syncExtension(f);
@@ -99,6 +130,12 @@ test('an interrupted directory swap recovers the preserved prior bundle before c
 
 for (const [name, patch] of [
   ['broader permissions', { permissions: ['activeTab', 'scripting', 'storage', 'cookies'] }],
+  ['all optional hosts', { optional_host_permissions: ['<all_urls>'] }],
+  ['additional optional host', { optional_host_permissions: ['https://chatgpt.com/*', 'https://example.com/*'] }],
+  ['optional subdomains', { optional_host_permissions: ['https://*.chatgpt.com/*'] }],
+  ['new permissions without optional host schema', { optional_host_permissions: undefined }],
+  ['legacy permissions mixed with optional host schema', { permissions: ['activeTab', 'scripting', 'storage'] }],
+  ['extra optional permissions', { optional_permissions: ['cookies'] }],
   ['remote hosts', { host_permissions: ['https://example.com/*'] }],
   ['different extension identity', { key: 'untrusted' }],
   ['remote update URL', { update_url: 'https://example.com/update.xml' }],

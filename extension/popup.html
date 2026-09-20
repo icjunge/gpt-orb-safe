@@ -3,7 +3,7 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GPT 用量悬浮球 · 页面同步</title><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <header><span class="orb" aria-hidden="true"></span><div><h1>用量页面同步</h1><p>只发送用量数字 · 登录留在官方网页</p></div><span class="badge">2.1.3</span></header>
+  <header><span class="orb" aria-hidden="true"></span><div><h1>用量页面同步</h1><p>只发送用量数字 · 登录留在官方网页</p></div><span class="badge">2.2.0</span></header>
   <main>
     <section class="status-box" aria-live="polite"><div class="status-head"><i id="light"></i><strong id="status">正在检查…</strong></div><p id="detail">配对只在当前运行会话有效。</p></section>
     <section id="setup-help" class="setup-help" hidden aria-live="polite">
@@ -20,6 +20,18 @@
     <form id="pair-form"><label class="sr-only" for="code">本机会话配对码</label><input disabled id="code" type="password" autocomplete="off" spellcheck="false" maxlength="80" placeholder="GPTORB2.43861.…"><button id="start" class="primary" type="submit" disabled>连接并开始读取</button></form>
     <div class="actions"><button id="refresh" type="button" disabled>重新读取页面</button><button id="stop" class="subtle" type="button" disabled>停止并清除配对</button></div>
     <p id="message" class="message" role="status"></p>
+    <section class="auto-refresh" aria-labelledby="auto-heading">
+      <h2 id="auto-heading">后台定时刷新</h2>
+      <p class="hint">可以关闭用量页。浏览器与悬浮球需保持运行，且浏览器已登录官方网站。</p>
+      <form id="auto-form">
+        <label for="auto-minutes">每隔多少分钟刷新（1–1440）</label>
+        <div class="auto-config"><input disabled id="auto-minutes" type="number" min="1" max="1440" step="1" value="5" required><button disabled id="auto-enable" type="submit">开启后台刷新</button></div>
+      </form>
+      <p id="auto-status" class="hint" aria-live="polite">尚未开启。</p>
+      <div class="actions"><button disabled id="auto-now" type="button">立即刷新</button><button disabled id="auto-disable" type="button" class="subtle">关闭并撤销授权</button></div>
+      <p class="hint">尚未配对时，先在上方粘贴配对码，再点「开启后台刷新」。开启时需允许访问 chatgpt.com；浏览器授予整站权限，代码只读取用量页。每轮临时打开不抢焦点的标签页，读取后关闭；你主动使用的标签页会保留。登录凭据留在浏览器，扩展不提取它们。</p>
+      <p class="hint">浏览器重启或扩展重新加载后，需重新配对并开启。电脑休眠或网络异常可能延迟刷新。</p>
+    </section>
     <details id="manual"><summary>页面未识别？手动填写可见数值</summary>
       <p class="hint">仅填写官方页面明确显示的数字；留空表示未知。发送后会标为“手动录入”，并暂停自动读取。</p>
       <form id="manual-form">
