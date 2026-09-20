@@ -4,6 +4,31 @@
 
 下列 `OWNER/REPOSITORY` 是占位参数，必须替换为实际来源。先检查 `update-config.json`：`repository`、`publicKey` 均为 `null` 表示更新源未启用。首次交付可自动更新的安装版前，必须完成来源和公钥配置；不能先交付停用版本，再期待它自行发现公钥。
 
+## 一次性本地初始化
+
+当前仓库为 <https://github.com/icjunge/gpt-orb-safe>。仓库已公开，日常测试与 Windows 安装包构建由 GitHub Actions 执行；正式发布仍需要先建立签名配置。
+
+维护者在自己的电脑安装 Node.js 22.12+、Git 和 [GitHub CLI](https://cli.github.com/)，然后在终端运行：
+
+```sh
+gh auth login --hostname github.com --git-protocol https --web
+gh repo clone icjunge/gpt-orb-safe
+cd gpt-orb-safe
+npm run release:setup -- icjunge/gpt-orb-safe
+```
+
+如果已克隆仓库，直接进入已有目录并确保 `main` 已与远程同步，不要重复克隆到同一位置。此初始化脚本只用 Node.js 内置模块，不需要先运行 `npm ci`。它会检查仓库、当前分支和发布保护，创建或复用仓库外的本地 Ed25519 私钥，经标准输入将它交给 GitHub 的 `release` 环境 Secret，再把公钥写入 `update-config.json`。不同的既有环境保护或签名公钥会使操作停止，不会被覆盖。运行 `npm run release:setup -- icjunge/gpt-orb-safe --dry-run` 可只检查，不写入。
+
+脚本不自动提交、推送或发布。成功后按它打印的命令提交和推送 `update-config.json`，再创建并推送 `v2.1.0` 标签。保护的签名作业会等待你在 GitHub Actions 审核；完成后生成草稿 Release，检查安装包并正式发布。为便于单人维护，初始化允许发布者审核自己的发布；脚本不会执行审核或跳过审核。
+
+脚本通过公开 API 核验指定审核人和 `v*` 标签限制；它不能配置或核验管理员绕过保护的界面开关。可在 Settings → Environments → release 中取消允许管理员绕过保护。仓库管理员始终能够修改这些设置，发布保护不能防御已被控制的管理员账号。
+
+妥善备份脚本提示位置中的私钥，**不要将它发到聊天、issue 或仓库**。之后发布新版本继续使用同一密钥，不必每次初始化。普通使用者只安装最终 EXE，不需要 Node.js、Git 或 GitHub CLI。
+
+Windows 初始化仅使用用户目录下的默认密钥位置，不接受 `--key-file` 自定义路径或 UNC 形式的网络路径。它依赖 Windows 用户目录现有的访问权限，不会把 POSIX 的 `0600` 当作 Windows ACL 保证；请使用本机用户目录，不要使用映射网络盘，也不要将该目录共享或改成其他用户可读。Linux / macOS 可用仓库外的 `--key-file` 绝对路径，已有密钥须仅当前用户有访问权限。
+
+以下各节保留分步配置与后续版本发布说明。
+
 ## 1. 仓库与工具
 
 使用 Node.js 22.12+、Git、GitHub CLI（运行仓库辅助脚本时）及 Python 3.10+（生成源码 / 扩展压缩包时）。维护者使用自己的 GitHub CLI 登录；桌面用户无需 GitHub 登录或 PAT。

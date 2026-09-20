@@ -65,6 +65,10 @@ Windows 10 / 11（64 位）桌面悬浮球，通过 Chrome / Edge 扩展同步�
 
 ## 源码、打包与发布
 
+代码仓库：<https://github.com/icjunge/gpt-orb-safe>。GitHub Actions 会运行 Linux / Windows 测试，并在 Windows 验证安装包构建；这不代表已发布可下载的正式版本。
+
+首次启用签名发布，维护者可按 [RELEASE.md](RELEASE.md) 的「一次性本地初始化」运行设置脚本。私钥在维护者自己的电脑生成，写入 GitHub 的受保护发布环境；不需要把私钥发给任何聊天。此步骤只做一次，普通悬浮球用户不需要安装开发工具。
+
 使用 Node.js 22.12+，执行 `npm ci`、`npm test`；`npm start` 以固定版本 Electron 启动。在 Windows 构建环境运行 `npm run build:win`，生成 Windows x64 NSIS 安装包。生成源码和小型扩展压缩包：
 
 ```sh
