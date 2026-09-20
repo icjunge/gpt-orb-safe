@@ -10,6 +10,8 @@
 
 维护者在自己的电脑安装 Node.js 22.12+、Git 和 [GitHub CLI](https://cli.github.com/)，然后在终端运行：
 
+Windows 可先下载并运行 [Install-Tools.cmd](scripts/Install-Tools.cmd)，自动检测并通过微软 WinGet 安装缺失的三个工具，安装后显示实际版本。脚本保留管理员授权提示，不自动重启，不更改 PowerShell 执行策略；已有满足要求的工具会跳过。缺少 WinGet 时按提示安装微软 App Installer。`Install-Tools.cmd --check` 只检查，不安装。安装成功后重新打开终端，再执行下面的初始化命令。
+
 ```sh
 gh auth login --hostname github.com --git-protocol https --web
 gh repo clone icjunge/gpt-orb-safe
