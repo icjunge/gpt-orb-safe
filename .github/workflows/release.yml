@@ -1,0 +1,69 @@
+name: Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/validate-release.cjs
+      - run: npm test
+      - run: npm run build:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - run: python scripts/package_windows.py --source-only --extension-zip --output dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/GPT-Orb-Setup-*-x64.exe
+            dist/GPT-Orb-*-Source.zip
+            dist/GPT-Orb-*-Browser-Extension.zip
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Verify pinned public key and sign actual installer
+        run: |
+          node scripts/validate-release.cjs
+          node scripts/configure-release.cjs
+          node scripts/sign-release.cjs dist
+        env:
+          ORB_UPDATE_PRIVATE_KEY: ${{ secrets.ORB_UPDATE_PRIVATE_KEY }}
+      - name: Create a draft release for review
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/*.zip dist/orb-update.json dist/latest.yml dist/*.sha256 --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

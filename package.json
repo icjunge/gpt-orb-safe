@@ -1,0 +1,28 @@
+{
+  "name": "gpt-usage-orb-safe",
+  "productName": "GPT Usage Orb Safe",
+  "version": "2.1.0",
+  "description": "A local desktop usage orb synchronized from visible official page data; no account authorization.",
+  "main": "src/main.cjs",
+  "author": "GPT Usage Orb contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "build:win": "electron-builder --win nsis --x64 --publish never",
+    "release:sign": "node scripts/sign-release.cjs",
+    "release:configure": "node scripts/configure-release.cjs",
+    "release:key": "node scripts/generate-signing-key.cjs",
+    "repository:setup": "node scripts/setup-repository.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.4.3",
+    "electron-builder": "26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

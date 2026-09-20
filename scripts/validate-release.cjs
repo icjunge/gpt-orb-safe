@@ -1,0 +1,12 @@
+'use strict';
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const pkg = require('../package.json');
+const manifest = require('../extension/manifest.json');
+const config = require('../update-config.json');
+if (!/^(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,4})$/.test(pkg.version) || pkg.version.split('.').some(part => Number(part) > 65535) || manifest.version !== pkg.version) throw new Error('Application/extension stable versions must match');
+if (config.schema !== 1 || config.channel !== 'stable' || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(config.repository || '')) throw new Error('Commit a reviewed real repository and public key before publishing');
+if (crypto.createPublicKey(config.publicKey).asymmetricKeyType !== 'ed25519') throw new Error('Invalid pinned release key');
+if (process.env.GITHUB_REPOSITORY && process.env.GITHUB_REPOSITORY !== config.repository) throw new Error('Workflow repository differs from configured origin');
+if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== 'v'+pkg.version) throw new Error('Tag differs from application version');
+console.log('Release origin, public verification key and version validated.');

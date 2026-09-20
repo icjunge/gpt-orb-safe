@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+artifacts/
+*.log
+__pycache__/
+*.pyc
+*.partial
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*private*
+!scripts/generate-signing-key.cjs

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPT 用量悬浮球 · 页面同步</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><span class="orb" aria-hidden="true"></span><div><h1>用量页面同步</h1><p>只发送用量数字 · 登录留在官方网页</p></div><span class="badge">2.1.0</span></header>
+  <main>
+    <section class="status-box" aria-live="polite"><div class="status-head"><i id="light"></i><strong id="status">正在检查…</strong></div><p id="detail">配对只在当前运行会话有效。</p></section>
+    <section id="setup-help" class="setup-help" hidden aria-live="polite">
+      <h2>加载扩展后再连接</h2>
+      <ol>
+        <li>在浏览器地址栏输入 <code>chrome://extensions</code>；Edge 输入 <code>edge://extensions</code>。</li>
+        <li>开启「开发者模式」，点击「加载已解压的扩展程序」，选择包含 <code>manifest.json</code> 的 <code>Browser-Extension</code> 文件夹。</li>
+        <li>打开官方用量页，点击浏览器右上角的扩展图标（拼图），选择「GPT 用量悬浮球 · 页面同步」。</li>
+      </ol>
+      <p>如果已安装，请先在扩展管理页点击「重新加载」。不要双击 <code>popup.html</code>；本页面无需填写 GPT 密码或登录令牌。</p>
+    </section>
+    <p class="step"><span>1</span> 打开并登录<a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">官方 Codex 用量页 ↗</a></p>
+    <p class="step"><span>2</span> 在悬浮球里复制配对码，在此粘贴</p>
+    <form id="pair-form"><label class="sr-only" for="code">本机会话配对码</label><input disabled id="code" type="password" autocomplete="off" spellcheck="false" maxlength="80" placeholder="GPTORB2.43861.…"><button id="start" class="primary" type="submit" disabled>连接并开始读取</button></form>
+    <div class="actions"><button id="refresh" type="button" disabled>重新读取页面</button><button id="stop" class="subtle" type="button" disabled>停止并清除配对</button></div>
+    <p id="message" class="message" role="status"></p>
+    <details id="manual"><summary>页面未识别？手动填写可见数值</summary>
+      <p class="hint">仅填写官方页面明确显示的数字；留空表示未知。发送后会标为“手动录入”，并暂停自动读取。</p>
+      <form id="manual-form">
+        <div class="grid"><label>本轮已用 %<input disabled id="session-used" type="number" min="0" max="100" step="0.1" placeholder="未知"></label><label>本周已用 %<input disabled id="weekly-used" type="number" min="0" max="100" step="0.1" placeholder="未知"></label></div>
+        <label>本轮重置时间（本地时区）<input disabled id="session-reset" type="datetime-local"></label>
+        <label>本周重置时间（本地时区）<input disabled id="weekly-reset" type="datetime-local"></label>
+        <div class="grid"><label>页面累计 Token<input disabled id="total-tokens" type="number" min="0" step="1" placeholder="未知"></label><label>页面今日 Token<input disabled id="today-tokens" type="number" min="0" step="1" placeholder="未知"></label></div>
+        <p class="hint">若页面写“剩余 80%”，请填“已用 20%”。这不是整个 ChatGPT 账号的 Token 总计。</p>
+        <button id="manual-send" type="submit" disabled>发送手动数据</button>
+      </form>
+    </details>
+    <section class="update-help"><button id="reload-extension" type="button" class="subtle" disabled>重新加载扩展</button><p>悬浮球更新后点击此按钮生效，无需移除扩展。重新加载会清除会话配对；请从悬浮球重新复制配对码。</p></section>
+    <footer>只读取你主动授权的官方用量页。扩展不读取 Cookie、密码或账号凭据；仅向 127.0.0.1 发送数值。页面读取时间不代表服务器刚更新。</footer>
+  </main><script src="popup.js"></script>
+</body></html>

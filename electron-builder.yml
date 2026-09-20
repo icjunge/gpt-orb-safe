@@ -1,0 +1,47 @@
+appId: GPTUsageOrb.Safe.Desktop
+productName: GPT Usage Orb Safe
+artifactName: GPT-Orb-Setup-${version}-${arch}.${ext}
+electronVersion: 44.4.3
+asar: true
+compression: maximum
+npmRebuild: false
+publish: null
+afterPack: scripts/after-pack.cjs
+directories:
+  output: dist
+files:
+  - src/**
+  - assets/**
+  - extension/**
+  - extension-identity.json
+  - update-config.json
+  - package.json
+  - LICENSE
+  - README.html
+  - README.md
+  - SECURITY.md
+extraResources:
+  - from: README.html
+    to: README.html
+  - from: SECURITY.md
+    to: SECURITY.md
+  - from: extension
+    to: Browser-Extension
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: assets/orb.ico
+  executableName: GPT-Orb
+  signAndEditExecutable: false
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  packElevateHelper: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: GPT Usage Orb Safe
+  uninstallDisplayName: GPT Usage Orb Safe
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true

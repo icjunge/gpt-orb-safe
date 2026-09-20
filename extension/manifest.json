@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "GPT 用量悬浮球 · 页面同步",
+  "version": "2.1.0",
+  "minimum_chrome_version": "114",
+  "description": "只读同步官方 Codex 用量页的可见数字到本机悬浮球。不读取账号凭据，不使用额外账号授权。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2H/dKuytVyEKEkeO+GoL5wgcmYKVMJ5IiIJbIl9TIukMKwrcWEt56PSbrvyjEEhFO8T8nVbZ/CvGFAHU7cY+oQpQXSFToLlTyhP2B8LQzUd+WHcAqUKYj4QoR53JUGP1xEztmr+pCM3eUUKpA3oxtJzjvKhChpuBIjOeldBnG8veONccAZKoN4bRxBbX+PSQomsOV0NAcb6ZgWCqSqxbpad+FkBrH+8zkQTo+j5KsG9RTsZvmMXsz55sobHriIRDY/iVmgTO1rsVgOsYKDCfp63LANQqxCHQ8BMWWxDcNDUK48IuUCQgtJNMV+wumCubgMxokusFLvDfg7UE/s+FfwIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "同步官方用量页到悬浮球"
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:43861; img-src 'self'; style-src 'self'; base-uri 'none'; frame-src 'none'; form-action 'none'"
+  }
+}
