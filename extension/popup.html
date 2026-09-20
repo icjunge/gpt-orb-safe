@@ -3,7 +3,7 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GPT 用量悬浮球 · 页面同步</title><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <header><span class="orb" aria-hidden="true"></span><div><h1>用量页面同步</h1><p>只发送用量数字 · 登录留在官方网页</p></div><span class="badge">2.1.2</span></header>
+  <header><span class="orb" aria-hidden="true"></span><div><h1>用量页面同步</h1><p>只发送用量数字 · 登录留在官方网页</p></div><span class="badge">2.1.3</span></header>
   <main>
     <section class="status-box" aria-live="polite"><div class="status-head"><i id="light"></i><strong id="status">正在检查…</strong></div><p id="detail">配对只在当前运行会话有效。</p></section>
     <section id="setup-help" class="setup-help" hidden aria-live="polite">
@@ -15,7 +15,7 @@
       </ol>
       <p>如果已安装，请先在扩展管理页点击「重新加载」。不要双击 <code>popup.html</code>；本页面无需填写 GPT 密码或登录令牌。</p>
     </section>
-    <p class="step"><span>1</span> 打开并登录<a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">官方 Codex 用量页 ↗</a></p>
+    <p class="step"><span>1</span> 打开并登录<a href="https://chatgpt.com/settings/usage?tab=overview" target="_blank" rel="noopener noreferrer">官方用量页 ↗</a></p>
     <p class="step"><span>2</span> 在悬浮球里复制配对码，在此粘贴</p>
     <form id="pair-form"><label class="sr-only" for="code">本机会话配对码</label><input disabled id="code" type="password" autocomplete="off" spellcheck="false" maxlength="80" placeholder="GPTORB2.43861.…"><button id="start" class="primary" type="submit" disabled>连接并开始读取</button></form>
     <div class="actions"><button id="refresh" type="button" disabled>重新读取页面</button><button id="stop" class="subtle" type="button" disabled>停止并清除配对</button></div>

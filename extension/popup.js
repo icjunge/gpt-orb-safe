@@ -106,7 +106,7 @@ async function render() {
         $('detail').textContent = '可以输入配对码。请打开浏览器中的官方用量页，再从该窗口的工具栏打开扩展。';
       } else {
         $('status').textContent = '请打开官方用量页';
-        $('detail').textContent = '可以输入配对码。开始读取前，请切换到官方 Codex 用量页，并在该标签页点击工具栏中的扩展图标。';
+        $('detail').textContent = '可以输入配对码。开始读取前，请切换到官方用量页，并在该标签页点击工具栏中的扩展图标。';
       }
     } else if (!state.paired) {
       $('status').textContent = state.error ? '配对已失效' : '等待本机配对';

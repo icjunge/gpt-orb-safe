@@ -8,8 +8,8 @@
   let pending = false;
 
   function onUsagePage() {
-    return location.origin === 'https://chatgpt.com' &&
-      (location.pathname === '/codex/settings/usage' || location.pathname === '/codex/settings/usage/');
+    return typeof globalThis.OrbPageParser?.allowedLocation === 'function' &&
+      globalThis.OrbPageParser.allowedLocation(location);
   }
 
   function stop() {

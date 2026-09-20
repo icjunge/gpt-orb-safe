@@ -13,7 +13,7 @@ function isUsagePage(value) {
   try {
     const u = new URL(value);
     return u.origin === 'https://chatgpt.com' && !u.username && !u.password &&
-      (u.pathname === '/codex/settings/usage' || u.pathname === '/codex/settings/usage/');
+      /^\/(?:codex\/)?settings\/usage\/?$/.test(u.pathname);
   } catch { return false; }
 }
 
@@ -76,11 +76,11 @@ async function currentUsageTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   switch (usageTabState(tab)) {
     case 'no-tab':
-      throw new Error('未找到当前标签页。请切回浏览器中的官方 Codex 用量页，再点击工具栏中的扩展图标。');
+      throw new Error('未找到当前标签页。请切回浏览器中的官方用量页，再点击工具栏中的扩展图标。');
     case 'url-unavailable':
-      throw new Error('无法读取当前标签页地址。请关闭此面板，在官方 Codex 用量页点击浏览器工具栏中的扩展图标，授予本次页面访问权限。');
+      throw new Error('无法读取当前标签页地址。请关闭此面板，在官方用量页点击浏览器工具栏中的扩展图标，授予本次页面访问权限。');
     case 'unsupported-page':
-      throw new Error('当前标签页不是支持的官方 Codex 用量页。请打开上方的官方用量页链接，再从该标签页点击工具栏中的扩展图标。');
+      throw new Error('当前标签页不是支持的官方用量页。请打开上方的官方用量页链接，再从该标签页点击工具栏中的扩展图标。');
   }
   return tab;
 }

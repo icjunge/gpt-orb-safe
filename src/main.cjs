@@ -77,7 +77,7 @@ function trayMenu(){return Menu.buildFromTemplate([
   {label:'始终置顶',type:'checkbox',checked:settings.alwaysOnTop,click:item=>applySettings({alwaysOnTop:item.checked})},
   {label:'开机启动',type:'checkbox',checked:settings.autoStart,click:item=>applySettings({autoStart:item.checked})},
   {label:'检查程序更新',click:()=>void updateManager?.check({download:true})},
-  {label:'打开官方用量页面',click:()=>void shell.openExternal('https://chatgpt.com/codex/settings/usage')},
+  {label:'打开官方用量页面',click:()=>void shell.openExternal('https://chatgpt.com/settings/usage?tab=overview')},
   {label:'断开本机同步',click:disconnect},{type:'separator'},{label:'退出 GPT 悬浮球',click:()=>app.quit()}
 ]);}
 function createTray(){tray=new Tray(nativeImage.createFromPath(path.join(__dirname,'../assets/orb.png')).resize({width:32,height:32}));
@@ -122,7 +122,7 @@ function registerIpc(){
       case'hidePanel':panelWindow.hide();break;
       case'copyPairingCode':if(!bridge?.getStatus().listening)return{ok:false,error:'本机同步尚未启动'};clipboard.writeText(bridge.getPairingCode());break;
       case'disconnect':disconnect();break;
-      case'openDashboard':await shell.openExternal('https://chatgpt.com/codex/settings/usage');break;
+      case'openDashboard':await shell.openExternal('https://chatgpt.com/settings/usage?tab=overview');break;
       case'openExtensionFolder':{
         if(!extensionInfo?.path||extensionInfo.error)return{ok:false,error:extensionInfo?.error||'扩展文件尚未准备好，请重新启动程序。'};
         if(await shell.openPath(extensionInfo.path))return{ok:false,error:'无法打开扩展目录，请检查文件访问权限。'};break;}

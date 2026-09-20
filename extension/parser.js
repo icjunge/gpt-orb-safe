@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   // executeScript may inject again on a manual refresh; preserve deadlines for this document.
-  if (root.OrbPageParser?.parserVersion === 1) {
+  if (root.OrbPageParser?.parserVersion === 2) {
     if (typeof module !== 'undefined' && module.exports) module.exports = root.OrbPageParser;
     return;
   }
@@ -21,7 +21,7 @@
     try {
       const url = new URL(typeof location === 'string' ? location : location.href);
       return url.origin === 'https://chatgpt.com' && !url.username && !url.password &&
-        /^\/codex\/settings\/usage\/?$/.test(url.pathname);
+        /^\/(?:codex\/)?settings\/usage\/?$/.test(url.pathname);
     } catch { return false; }
   }
 
@@ -219,7 +219,7 @@
     return snapshot;
   }
 
-  const api = Object.freeze({ parserVersion: 1, collect, allowedLocation, classifyLabel, parseUsedPercent, parseInteger, parseTokenMetric, parseAbsoluteTime, relativeReset, parseReset });
+  const api = Object.freeze({ parserVersion: 2, collect, allowedLocation, classifyLabel, parseUsedPercent, parseInteger, parseTokenMetric, parseAbsoluteTime, relativeReset, parseReset });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.OrbPageParser = api;
 })(globalThis);

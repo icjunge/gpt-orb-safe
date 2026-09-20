@@ -4,8 +4,20 @@ const assert = require('node:assert/strict');
 const parser = require('../extension/parser.js');
 
 test('only the exact official HTTPS usage route is eligible', () => {
-  for (const value of ['https://chatgpt.com/codex/settings/usage', 'https://chatgpt.com/codex/settings/usage/', 'https://chatgpt.com/codex/settings/usage?view=usage']) assert.equal(parser.allowedLocation(value), true);
-  for (const value of ['http://chatgpt.com/codex/settings/usage', 'https://chatgpt.com.evil.invalid/codex/settings/usage', 'https://user@chatgpt.com/codex/settings/usage', 'https://chatgpt.com:8080/codex/settings/usage', 'https://chatgpt.com/codex/settings/usage/extra', 'https://chatgpt.com/c/test', 'https://chatgpt.com/codex/settings/%75sage', 'invalid']) assert.equal(parser.allowedLocation(value), false, value);
+  for (const base of ['https://chatgpt.com/settings/usage', 'https://chatgpt.com/codex/settings/usage']) {
+    for (const value of [base, `${base}/`, `${base}?tab=overview`, `${base}/?tab=overview#weekly`]) {
+      assert.equal(parser.allowedLocation(value), true, value);
+      assert.equal(parser.allowedLocation(new URL(value)), true, value);
+    }
+    for (const value of [base.replace('https:', 'http:'), base.replace('chatgpt.com', 'chatgpt.com.evil.invalid'),
+      base.replace('chatgpt.com', 'user@chatgpt.com'), base.replace('chatgpt.com', 'user:pass@chatgpt.com'),
+      base.replace('chatgpt.com', 'chatgpt.com:8080'), `${base}/extra`, `${base}//`, `${base}-extra`,
+      base.replace('usage', '%75sage'), base.replace('settings', 'Settings')]) {
+      assert.equal(parser.allowedLocation(value), false, value);
+      assert.equal(parser.collect({}, value), null, value);
+    }
+  }
+  for (const value of ['https://chatgpt.com/', 'https://chatgpt.com/c/test', 'https://chatgpt.com/settings', 'invalid']) assert.equal(parser.allowedLocation(value), false, value);
   assert.equal(parser.collect({}, 'https://example.com/'), null);
 });
 
@@ -92,12 +104,27 @@ test('reinjecting parser preserves its document cache rather than moving relativ
   const original = context.OrbPageParser;
   vm.runInContext(source, context);
   assert.equal(context.OrbPageParser, original);
-  assert.equal(context.OrbPageParser.parserVersion, 1);
+  assert.equal(context.OrbPageParser.parserVersion, 2);
+});
+
+test('updated parser replaces an older injected parser before collecting on the new route', () => {
+  const vm = require('node:vm');
+  const fs = require('node:fs');
+  const source = fs.readFileSync(require.resolve('../extension/parser.js'), 'utf8');
+  const oldParser = { parserVersion: 1, allowedLocation: () => false };
+  const context = vm.createContext({ URL, OrbPageParser: oldParser });
+  vm.runInContext(source, context);
+  assert.notEqual(context.OrbPageParser, oldParser);
+  assert.equal(context.OrbPageParser.parserVersion, 2);
+  assert.equal(context.OrbPageParser.allowedLocation('https://chatgpt.com/settings/usage?tab=overview'), true);
+  const updated = context.OrbPageParser;
+  vm.runInContext(source, context);
+  assert.equal(context.OrbPageParser, updated);
 });
 
 test('valid page with no main metric area returns explicit unknowns without scanning page text', () => {
   const document = { querySelector(selector) { assert.equal(selector, 'main,[role="main"]'); return null; }, get body() { throw new Error('full page access is forbidden'); } };
-  const snapshot = parser.collect(document, 'https://chatgpt.com/codex/settings/usage');
+  const snapshot = parser.collect(document, 'https://chatgpt.com/settings/usage?tab=overview');
   assert.deepEqual(snapshot.windows, []);
   assert.deepEqual(snapshot.tokens, { total: null, today: null });
   assert.deepEqual(Object.keys(snapshot).sort(), ['capturedAt', 'source', 'tokens', 'version', 'windows']);

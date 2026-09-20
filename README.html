@@ -10,17 +10,17 @@
 </style>
 </head>
 <body><main>
-<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.1.2</div><h1>用量留在桌面。<br>更新在应用内完成。</h1><p class="lead">Windows 10 / 11 · 64 位 · Chrome / Edge<br>桌面只接收官方页面上的可见用量数字。账号登录由浏览器与 OpenAI 官方网站管理。</p></header>
+<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.1.3</div><h1>用量留在桌面。<br>更新在应用内完成。</h1><p class="lead">Windows 10 / 11 · 64 位 · Chrome / Edge<br>桌面只接收官方页面上的可见用量数字。账号登录由浏览器与 OpenAI 官方网站管理。</p></header>
 <div class="callout"><strong>这里不需要 GPT 密码、API Key 或 Cookie。</strong><br>配对码只用于本次运行的本机同步。更新也不需要客户端 GitHub 登录或 PAT。</div>
 <h2>首次安装 / 从免安装版迁移</h2>
 <ol>
-<li>退出旧悬浮球，运行可信渠道的 <code>GPT-Orb-Setup-2.1.2-x64.exe</code>，完成一次安装迁移。</li>
+<li>退出旧悬浮球，运行可信渠道的 <code>GPT-Orb-Setup-2.1.3-x64.exe</code>，完成一次安装迁移。</li>
 <li>打开「GPT Usage Orb Safe」，点击「打开固定扩展文件夹」。这是当前用户数据目录中的固定 <code>Browser-Extension</code>，通常在 <code>%APPDATA%\GPT Usage Orb Safe</code> 下，以按钮打开的位置为准。</li>
 <li>Chrome 打开 <code>chrome://extensions</code>，Edge 打开 <code>edge://extensions</code>。开启「开发者模式」，加载这个固定目录。如果此前加载过旧解压目录，先移除旧项，再加载新目录一次。</li>
-<li>访问 <a href="https://chatgpt.com/codex/settings/usage" rel="noopener noreferrer">chatgpt.com/codex/settings/usage</a>。如需登录，只在确认地址正确的官方网站完成。</li>
+<li>访问 <a href="https://chatgpt.com/settings/usage?tab=overview" rel="noopener noreferrer">chatgpt.com/settings/usage?tab=overview</a>。如需登录，只在确认地址正确的官方网站完成。</li>
 <li>点击悬浮球「复制本次配对码」，从浏览器工具栏打开扩展，粘贴并点击「连接并开始读取」。保留官方用量页，检查面板读取状态。</li>
 </ol>
-<p><strong>不要双击 <code>popup.html</code>。</strong>普通文件页没有扩展消息 API，必须先加载扩展再从工具栏打开。2.1.2 保留了 <code>sendMessage</code> 不可用时的加载指引。</p>
+<p><strong>不要双击 <code>popup.html</code>。</strong>普通文件页没有扩展消息 API，必须先加载扩展再从工具栏打开。2.1.3 保留了 <code>sendMessage</code> 不可用时的加载指引。</p>
 <p class="muted">本扩展尚未上架商店。浏览器可能询问本地网络权限；它仅向本机 <code>127.0.0.1:43861</code> 同步数字。桌面退出、浏览器重启、扩展重载或更新后需要重新配对。</p>
 <h2>以后怎样更新</h2>
 <ol>
@@ -33,7 +33,7 @@
 <p>设置里的「打开更新备份文件夹」可查看 <code>recovery</code> 文件夹。它只有偏好设置备份，<strong>不是完整程序快照或安装失败后的自动回滚</strong>。安装中断可能需要可信安装包修复；恢复设置前先退出程序，再将选定备份复制为用户数据目录中的 <code>preferences.json</code>。</p>
 <h2>已克隆源码时更新扩展</h2>
 <p>Windows 上已有 Node.js 22.12+ 与本仓库时，在仓库目录先执行 <code>git pull --ff-only</code>；成功后执行 <code>npm run extension:update</code>。无需 <code>npm ci</code> 或重装桌面程序。</p>
-<p>命令只将扩展同步到 <code>%APPDATA%\GPT Usage Orb Safe\Browser-Extension</code> 并打印实际目录。若浏览器已加载该目录，在扩展管理页点击「重新加载」，确认版本 2.1.2 后重新配对。若仍加载 Downloads 下的旧目录，请先移除旧项，再加载固定目录一次；所选目录中必须直接包含 <code>manifest.json</code>。</p>
+<p>命令只将扩展同步到 <code>%APPDATA%\GPT Usage Orb Safe\Browser-Extension</code> 并打印实际目录。若浏览器已加载该目录，在扩展管理页点击「重新加载」，确认版本 2.1.3 后重新配对。若仍加载 Downloads 下的旧目录，请先移除旧项，再加载固定目录一次；所选目录中必须直接包含 <code>manifest.json</code>。</p>
 <p>此方式运行本地源码，不经过发布安装包的签名验证；请先检查来自可信仓库的变更。普通用户继续使用应用内的签名更新。</p>
 <h2>日常使用与数字含义</h2>
 <p>拖动悬浮球移动，点击展开 / 收起。托盘菜单和 <code>Ctrl + Alt + G</code> 可找回面板。设置中可调整置顶、透明度、额度提醒和开机启动；开机启动默认关闭。</p>
@@ -58,5 +58,5 @@
 <p>已用合成数据检查 Node 接收边界、签名与更新流程、安装包篡改、设置备份、页面 DOM、离屏界面，以及 Electron Chromium 中实际 MV3 扩展弹窗和后台传输。</p>
 <p><strong>尚未完成实体 Windows 安装 / 升级与真实账号页面验证。</strong>Electron 测试不等于完整 Chrome / Edge 工具栏、临时页面授权及本地网络权限流程验收。浏览器版本、企业策略及网站改版仍可能影响运行。</p>
 <p>更多安全边界：<a href="SECURITY.md">SECURITY.md</a>。源码包含完整使用说明、自动测试和维护者发布流程。</p>
-<footer>GPT 悬浮球 2.1.2 · 独立制作 · MIT 许可</footer>
+<footer>GPT 悬浮球 2.1.3 · 独立制作 · MIT 许可</footer>
 </main></body></html>

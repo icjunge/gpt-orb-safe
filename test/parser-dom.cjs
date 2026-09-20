@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 
 function fixtures() {
   const main = document.querySelector('main');
-  const parse = html => { main.innerHTML = html; return OrbPageParser.collect(document, 'https://chatgpt.com/codex/settings/usage'); };
+  const parse = html => { main.innerHTML = html; return OrbPageParser.collect(document, 'https://chatgpt.com/settings/usage?tab=overview'); };
   const card = (label, value, extra = '') => '<section><h3>' + label + '</h3><p>' + value + '</p>' + extra + '</section>';
   // This getter makes an accidental full page text scan fail the test immediately.
   Object.defineProperty(document.body, 'innerText', { get() { throw new Error('body.innerText must not be read'); } });

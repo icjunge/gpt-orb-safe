@@ -6,7 +6,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const ID = 'agneegnckfnfbmajknfomclligggnhie';
-const PAGE = 'https://chatgpt.com/codex/settings/usage';
+const PAGE = 'https://chatgpt.com/settings/usage?tab=overview';
+const USAGE_ROUTES = ['https://chatgpt.com/settings/usage', 'https://chatgpt.com/codex/settings/usage'];
 const SECRET = 'A'.repeat(43);
 const CODE = `GPTORB2.43861.${SECRET}`;
 const popup = { id: ID, url: `chrome-extension://${ID}/popup.html` };
@@ -111,8 +112,8 @@ test('page validation failures preserve an existing pairing without mutations, s
   for (const [tab, hint] of [
     [undefined, /未找到当前标签页/],
     [{ id: 9 }, /无法读取当前标签页地址/],
-    [{ id: 9, url: 'https://example.test/private?token=not-for-errors' }, /不是支持的官方 Codex 用量页/],
-    [{ id: 9, url: popup.url }, /不是支持的官方 Codex 用量页/]
+    [{ id: 9, url: 'https://example.test/private?token=not-for-errors' }, /不是支持的官方用量页/],
+    [{ id: 9, url: popup.url }, /不是支持的官方用量页/]
   ]) {
     h.state.tab = tab;
     for (const message of [
@@ -134,20 +135,27 @@ test('page validation failures preserve an existing pairing without mutations, s
 });
 
 test('page diagnostics retain the exact official origin and route allowlist', async () => {
-  for (const url of [PAGE, `${PAGE}/`, `${PAGE}?view=limits`, `${PAGE}/?view=limits#weekly`]) {
+  for (const url of USAGE_ROUTES.flatMap(base => [base, `${base}/`, `${base}?tab=overview`, `${base}/?view=limits#weekly`])) {
     const h = harness();
     h.state.tab.url = url;
     assert.equal((await h.send({ type: 'orb:status' })).tabState, 'usage-page', url);
     assert.equal((await h.send({ type: 'orb:start', code: CODE })).ok, true, url);
     assert.equal(h.injections.length, 1);
+    const sender = { ...content, url, tab: { id: 7, url } };
+    assert.equal((await h.send({ type: 'orb:snapshot', snapshot: snapshot() }, sender)).ok, true, url);
+    assert.equal(h.requests.length, 1);
   }
   const h = harness();
   for (const url of [
-    'http://chatgpt.com/codex/settings/usage',
-    'https://chatgpt.com.evil.test/codex/settings/usage',
-    'https://chatgpt.com:444/codex/settings/usage',
-    'https://user:password@chatgpt.com/codex/settings/usage',
-    `${PAGE}-extra`, `${PAGE}/extra`, 'https://chatgpt.com/codex/settings',
+    ...USAGE_ROUTES.flatMap(base => [
+      base.replace('https:', 'http:'),
+      base.replace('chatgpt.com', 'chatgpt.com.evil.test'),
+      base.replace('chatgpt.com', 'chatgpt.com:444'),
+      base.replace('chatgpt.com', 'user:password@chatgpt.com'),
+      `${base}-extra`, `${base}/extra`, `${base}//`, base.replace('usage', '%75sage'),
+      base.replace('settings', 'Settings')
+    ]),
+    'https://chatgpt.com/codex/settings', 'https://chatgpt.com/settings',
     'https://chatgpt.com/Codex/settings/usage', 'https://chatgpt.com/c/'
   ]) {
     h.state.tab.url = url;
@@ -157,6 +165,25 @@ test('page diagnostics retain the exact official origin and route allowlist', as
   assert.equal(h.mutations.length, 0);
   assert.equal(h.stops.length, 0);
   assert.equal(h.injections.length, 0);
+  assert.equal(h.requests.length, 0);
+});
+
+test('content routes are checked independently for the sender, tab and live navigation', async () => {
+  const h = harness();
+  assert.equal((await h.send({ type: 'orb:start', code: CODE })).ok, true);
+  for (const url of ['https://chatgpt.com/', 'https://chatgpt.com/settings/usage/extra',
+    'https://chatgpt.com.evil.test/settings/usage?tab=overview',
+    'https://user:password@chatgpt.com/settings/usage?tab=overview',
+    'https://chatgpt.com:444/settings/usage?tab=overview']) {
+    h.state.tab.url = PAGE;
+    for (const sender of [{ ...content, url }, { ...content, tab: { id: 7, url } }]) {
+      assert.equal((await h.send({ type: 'orb:snapshot', snapshot: snapshot() }, sender)).ok, false, url);
+    }
+    h.state.tab.url = url;
+    const result = await h.send({ type: 'orb:snapshot', snapshot: snapshot() }, content);
+    assert.equal(result.ok, false, url);
+    assert.equal(result.stop, true, url);
+  }
   assert.equal(h.requests.length, 0);
 });
 
