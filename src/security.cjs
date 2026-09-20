@@ -1,7 +1,10 @@
 'use strict';
-function validSettings(input,base={alwaysOnTop:true,autoStart:false,notifications:true,opacity:1,autoCheckUpdates:true}){
+function validSettings(input,base={alwaysOnTop:true,autoStart:false,notifications:true,opacity:1,autoCheckUpdates:true,
+  usageSource:'codex-cli',codexEnabled:false,refreshMinutes:5}){
   const out={...base};if(!input||typeof input!=='object'||Array.isArray(input))return out;
-  for(const k of['alwaysOnTop','autoStart','notifications','autoCheckUpdates'])if(typeof input[k]==='boolean')out[k]=input[k];
+  for(const k of['alwaysOnTop','autoStart','notifications','autoCheckUpdates','codexEnabled'])if(typeof input[k]==='boolean')out[k]=input[k];
+  if(['codex-cli','browser'].includes(input.usageSource))out.usageSource=input.usageSource;
+  if(Number.isInteger(input.refreshMinutes)&&input.refreshMinutes>=1&&input.refreshMinutes<=1440)out.refreshMinutes=input.refreshMinutes;
   if(typeof input.opacity==='number'&&Number.isFinite(input.opacity))out.opacity=Math.min(1,Math.max(.55,input.opacity));
   return out;
 }

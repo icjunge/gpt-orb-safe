@@ -1,8 +1,8 @@
 {
   "name": "gpt-usage-orb-safe",
   "productName": "GPT Usage Orb Safe",
-  "version": "2.2.0",
-  "description": "A local desktop usage orb synchronized from visible official page data; no account authorization.",
+  "version": "2.3.0",
+  "description": "A local desktop usage orb with read-only official Codex CLI integration and optional browser-page sync.",
   "main": "src/main.cjs",
   "author": "GPT Usage Orb contributors",
   "license": "MIT",

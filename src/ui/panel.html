@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>GPT Orb · 浏览器只读同步</title>
+  <title>GPT Orb · Codex 用量</title>
   <link rel="stylesheet" href="panel.css">
 </head>
 <body>
@@ -18,8 +18,26 @@
     </header>
     <div class="main-scroll">
       <section id="overview">
-        <div class="page-heading"><div><p class="eyebrow">BROWSER → YOUR DESKTOP</p><h1>桌面用量，一眼掌握。</h1></div><span id="source-badge" class="plan-badge">待配对</span></div>
-        <div class="source-row"><span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M7 6.5h.1M10 6.5h.1"/></svg></span><div class="source-copy"><span>浏览器只读同步</span><small id="source-description">登录留在官方网页，用量留在桌面</small></div><span id="connection-dot" class="connection-dot"></span></div>
+        <div class="page-heading"><div><p class="eyebrow">CODEX → YOUR DESKTOP</p><h1>桌面用量，一眼掌握。</h1></div><span id="source-badge" class="plan-badge">待配对</span></div>
+        <div class="source-row"><span class="source-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M7 6.5h.1M10 6.5h.1"/></svg></span><div class="source-copy"><span id="source-title">本机 Codex（实验性）</span><small id="source-description">官方 CLI 管理登录，用量留在桌面</small></div><span id="connection-dot" class="connection-dot"></span></div>
+        <div class="source-picker"><label for="usage-source">用量来源</label><select id="usage-source"><option value="codex-cli">本机 Codex（实验性）</option><option value="browser">浏览器扩展（备用）</option></select></div>
+        <section id="codex-controls" class="codex-card" aria-labelledby="codex-heading">
+          <div class="section-header"><h2 id="codex-heading">无需保留网页</h2><span id="codex-state-label">尚未开启</span></div>
+          <p id="codex-status" class="group-description" role="status">先安装官方 Codex CLI，并登录同一个 ChatGPT 账号。</p>
+          <form id="codex-refresh-form" class="codex-refresh-form">
+            <label for="refresh-minutes">每隔 <input id="refresh-minutes" type="number" min="1" max="1440" step="1" value="5" required inputmode="numeric"> 分钟刷新</label>
+            <button id="save-refresh-button" type="submit" class="secondary-button">保存间隔</button>
+          </form>
+          <p id="codex-schedule" class="codex-schedule"></p>
+          <div class="codex-actions"><button id="enable-codex-button" class="primary-button">开启自动读取</button><button id="refresh-codex-button" class="secondary-button" disabled>立即刷新</button><button id="disable-codex-button" class="text-button" disabled>停止读取</button></div>
+          <div id="codex-setup" class="codex-setup">
+            <p>首次使用：在 PowerShell 依次执行以下命令，登录与你网页端相同的 ChatGPT 账号。网页登录不等于 CLI 已登录。</p>
+            <pre class="setup-commands"><code>npm.cmd install -g @openai/codex
+if ($LASTEXITCODE -eq 0) { codex.cmd login }</code></pre>
+            <div class="codex-help-actions"><button id="copy-codex-setup-button" class="secondary-button">复制安装与登录命令</button><button id="codex-help-button" class="text-button">官方安装说明 ↗</button></div>
+          </div>
+          <p class="group-description codex-privacy">授权凭据由官方 Codex CLI 保管，悬浮球不读取或复制登录文件；只查询用量，不发起模型任务，也不自动使用重置次数。桌面工具需保持运行。</p>
+        </section>
         <section id="setup-card" class="setup-card">
           <div class="setup-heading"><span class="setup-symbol" aria-hidden="true">✳</span><div><h2>从官方页面，带回用量。</h2><p>首次设置约 1 分钟 · Chrome / Edge</p></div></div>
           <ol class="setup-steps">
@@ -37,20 +55,21 @@
             <div class="reset-row"><span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span id="reset-label">距离页面所示重置</span></span><strong id="reset-countdown">—</strong></div>
           </article>
           <section class="quota-section"><div class="section-header"><h2>额度窗口</h2><span id="limits-count"></span></div><div id="limits-list"></div></section>
-          <section class="usage-section"><div class="section-header"><h2>Token 用量</h2><span class="tiny-label">仅显示页面明确提供的数值</span></div><div class="usage-card"><div class="usage-metrics"><div><span class="metric-label">今日 Token</span><strong id="today-tokens">—</strong><span id="today-detail" class="metric-detail">官方页面未显示</span></div><div><span class="metric-label">累计 Token</span><strong id="total-tokens">—</strong><span id="total-detail" class="metric-detail">官方页面未显示</span></div></div></div></section>
+          <section class="usage-section"><div class="section-header"><h2>Token 用量</h2><span id="tokens-scope" class="tiny-label">仅显示官方返回的数值</span></div><div class="usage-card"><div class="usage-metrics"><div><span id="today-token-label" class="metric-label">最近一日 Token</span><strong id="today-tokens">—</strong><span id="today-detail" class="metric-detail">官方页面未显示</span></div><div><span id="total-token-label" class="metric-label">服务端累计 Token</span><strong id="total-tokens">—</strong><span id="total-detail" class="metric-detail">官方页面未显示</span></div></div></div></section>
+          <div id="reset-credits-row" class="reset-credits-row hidden"><span>剩余重置次数</span><strong id="reset-credits">—</strong></div>
           <p id="unrecognized-note" class="unrecognized-note hidden">页面布局暂未识别。可在浏览器扩展中手动录入页面明确显示的数值；空白字段保持未知。</p>
           <div class="record-row"><span id="record-label">页面读取时间</span><time id="record-time">—</time></div>
         </section>
         <div id="error-banner" class="error-banner hidden" role="status"><span aria-hidden="true">!</span><p id="error-text"></p></div>
-        <aside class="scope-note"><span class="info-symbol" aria-hidden="true">i</span><p>仅显示官方用量页中已识别的指标，不代表所有 ChatGPT 对话的 Token 总量。未显示的数据为「—」。页面读取时间不等于服务器数据更新时间。</p></aside>
+        <aside class="scope-note"><span class="info-symbol" aria-hidden="true">i</span><p id="scope-description">仅显示官方用量页中已识别的指标，不代表所有 ChatGPT 对话的 Token 总量。未显示的数据为「—」。页面读取时间不等于服务器数据更新时间。</p></aside>
       </section>
       <section id="settings-view" class="settings-view hidden">
         <button id="back-button" class="back-button">← <span>返回概览</span></button><p class="eyebrow">MAKE IT YOURS</p><h1>安静地，待在桌面。</h1><p class="settings-description">把小圆点调成你顺手的样子。</p>
-        <section class="settings-group"><h2>桌面体验</h2><label class="setting-row"><span><strong>始终置顶</strong><small>悬浮球保持在其他窗口上方</small></span><input id="always-on-top" class="switch-input" type="checkbox"><span class="switch" aria-hidden="true"></span></label><label class="setting-row"><span><strong>开机启动</strong><small>登录电脑后自动出现</small></span><input id="auto-start" class="switch-input" type="checkbox"><span class="switch" aria-hidden="true"></span></label><label class="setting-row"><span><strong>桌面通知</strong><small>读到页面额度偏低时提醒</small></span><input id="notifications" class="switch-input" type="checkbox"><span class="switch" aria-hidden="true"></span></label><div class="setting-slider"><label for="opacity"><strong>悬浮球不透明度</strong><span id="opacity-value">100%</span></label><input id="opacity" type="range" min="55" max="100" step="5" value="100"></div></section>
-        <section class="settings-group"><h2>浏览器同步</h2><p class="group-description">在浏览器扩展的「后台定时刷新」中设置间隔。开启后可关闭用量页，浏览器需保持运行。</p><p id="extension-status" class="group-description">首次加载固定扩展文件夹；以后更新后在扩展内点「重新加载」，并重新配对。</p><p id="extension-error" class="extension-notice hidden" role="status"></p><button id="dashboard-button" class="setting-link"><span>打开官方用量页面</span><span aria-hidden="true">↗</span></button><button id="folder-settings-button" class="setting-link"><span>打开固定扩展文件夹</span><span aria-hidden="true">↗</span></button><button id="pair-settings-button" class="setting-link"><span>复制本次配对码</span><span aria-hidden="true">⧉</span></button><button id="disconnect-button" class="setting-link danger"><span>断开同步并使旧配对码失效</span><span aria-hidden="true">↗</span></button><button id="help-button" class="setting-link"><span>查看使用说明</span><span aria-hidden="true">↗</span></button></section>
+        <section class="settings-group"><h2>桌面体验</h2><label class="setting-row"><span><strong>始终置顶</strong><small>悬浮球保持在其他窗口上方</small></span><input id="always-on-top" class="switch-input" type="checkbox"><span class="switch" aria-hidden="true"></span></label><label class="setting-row"><span><strong>开机启动</strong><small>登录电脑后自动出现</small></span><input id="auto-start" class="switch-input" type="checkbox"><span class="switch" aria-hidden="true"></span></label><label class="setting-row"><span><strong>桌面通知</strong><small>读到额度偏低时提醒</small></span><input id="notifications" class="switch-input" type="checkbox"><span class="switch" aria-hidden="true"></span></label><div class="setting-slider"><label for="opacity"><strong>悬浮球不透明度</strong><span id="opacity-value">100%</span></label><input id="opacity" type="range" min="55" max="100" step="5" value="100"></div></section>
+        <section id="browser-settings" class="settings-group"><h2>浏览器同步</h2><p class="group-description">在浏览器扩展的「后台定时刷新」中设置间隔。开启后可关闭用量页，浏览器需保持运行。</p><p id="extension-status" class="group-description">首次加载固定扩展文件夹；以后更新后在扩展内点「重新加载」，并重新配对。</p><p id="extension-error" class="extension-notice hidden" role="status"></p><button id="dashboard-button" class="setting-link"><span>打开官方用量页面</span><span aria-hidden="true">↗</span></button><button id="folder-settings-button" class="setting-link"><span>打开固定扩展文件夹</span><span aria-hidden="true">↗</span></button><button id="pair-settings-button" class="setting-link"><span>复制本次配对码</span><span aria-hidden="true">⧉</span></button><button id="disconnect-button" class="setting-link danger"><span>断开同步并使旧配对码失效</span><span aria-hidden="true">↗</span></button><button id="help-button" class="setting-link"><span>查看使用说明</span><span aria-hidden="true">↗</span></button></section>
         <section class="settings-group updates-group" aria-labelledby="updates-heading">
           <h2 id="updates-heading">版本与更新</h2>
-          <div class="update-version-row"><span>桌面版本 <strong id="current-version">2.2.0</strong></span><span id="available-version" class="update-version-tag hidden"></span></div>
+          <div class="update-version-row"><span>桌面版本 <strong id="current-version">2.3.0</strong></span><span id="available-version" class="update-version-tag hidden"></span></div>
           <p id="update-status" class="update-status" role="status">更新源尚未启用</p>
           <div id="update-progress-row" class="update-progress-row hidden"><progress id="update-progress" max="100" value="0" aria-label="更新下载进度"></progress><span id="update-progress-value">0%</span></div>
           <p id="update-last-checked" class="update-last-checked hidden"></p>
@@ -60,8 +79,8 @@
           <button id="release-page-button" class="setting-link hidden"><span>查看版本发布记录</span><span aria-hidden="true">↗</span></button>
           <button id="recovery-folder-button" class="setting-link"><span>打开更新备份文件夹</span><span aria-hidden="true">↗</span></button>
         </section>
-        <p class="settings-note">配对只允许本机扩展更新显示数值，不授予账号操作权限。退出工具或浏览器后需要重新配对。快捷键 Ctrl + Alt + G 可展开或收起面板。</p>
-        <div class="settings-footer"><span>GPT Orb <span id="footer-version" class="version-tag">2.2.0 · LOCAL</span><small>独立桌面工具 · 非 OpenAI 官方出品</small></span><button id="quit-button" class="text-button danger">退出工具</button></div>
+        <p id="settings-source-note" class="settings-note">本机 Codex 模式无需浏览器配对。快捷键 Ctrl + Alt + G 可展开或收起面板。</p>
+        <div class="settings-footer"><span>GPT Orb <span id="footer-version" class="version-tag">2.3.0 · LOCAL</span><small>独立桌面工具 · 非 OpenAI 官方出品</small></span><button id="quit-button" class="text-button danger">退出工具</button></div>
       </section>
     </div>
     <footer class="statusbar"><span><i id="footer-dot"></i><span id="sync-status" aria-live="polite">等待本机配对</span></span><button id="footer-dashboard-button" class="text-button" title="在浏览器打开官方用量页">官方页面 ↗</button></footer>

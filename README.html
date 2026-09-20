@@ -4,66 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>GPT 悬浮球 2.2 · 使用说明</title>
+<title>GPT 悬浮球 2.3 · 使用说明</title>
 <style>
 :root{color-scheme:dark;font:16px/1.8 system-ui,"Microsoft YaHei",sans-serif;color:#dbe5e7;background:#0a1014}*{box-sizing:border-box}body{margin:0}main{max-width:880px;margin:0 auto;padding:64px 28px 88px}header{padding-bottom:36px;border-bottom:1px solid #253039}.eyebrow{font-size:12px;letter-spacing:2px;color:#8ddbc6}h1{font-size:38px;line-height:1.3;letter-spacing:-1px;margin:14px 0}h2{font-size:21px;margin:36px 0 12px;color:#f0f6f6}p,ol,ul{margin:12px 0}.lead{font-size:18px;color:#aebfc6;max-width:720px}.callout{border:1px solid #345e54;background:#112921;padding:18px 22px;border-radius:14px;margin:26px 0}li{padding-left:4px;margin:9px 0}code{font-size:.9em;background:#1a252e;border:1px solid #2e3943;border-radius:5px;padding:2px 6px;overflow-wrap:anywhere}a{color:#85dbc7;text-decoration:underline;text-underline-offset:3px}table{width:100%;border-collapse:collapse;font-size:14px;margin:20px 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #27333b;padding:12px}th{color:#9cacb5;font-weight:500}td:first-child{width:150px;color:#dff7ef}small,.muted{color:#9babb3}footer{border-top:1px solid #253039;margin-top:36px;padding-top:22px;color:#899ba5;font-size:13px}strong{color:#f4faf8}@media(max-width:580px){main{padding:30px 20px}h1{font-size:30px}td:first-child{width:95px}}
 </style>
 </head>
 <body><main>
-<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.2.0</div><h1>用量留在桌面。<br>更新在应用内完成。</h1><p class="lead">Windows 10 / 11 · 64 位 · Chrome / Edge<br>桌面只接收官方页面上的可见用量数字。账号登录由浏览器与 OpenAI 官方网站管理。</p></header>
-<div class="callout"><strong>这里不需要 GPT 密码、API Key 或 Cookie。</strong><br>配对码只用于本次运行的本机同步。更新也不需要客户端 GitHub 登录或 PAT。</div>
-<h2>首次安装 / 从免安装版迁移</h2>
+<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.3.0</div><h1>关掉网页，<br>额度照常更新。</h1><p class="lead">Windows 10 / 11 · 64 位<br>通过本机官方 Codex CLI 定时查询，浏览器扩展保留为备用来源。刷新无需临时打开网页。</p></header>
+<div class="callout"><strong>本次需要更新桌面程序。</strong><br>仅更新扩展不能启用本机 Codex。登录由官方 CLI 管理，悬浮球不读取或复制账号凭据文件；不发起模型任务，也不自动重置额度。</div>
+<h2>首次连接本机 Codex</h2>
 <ol>
-<li>退出旧悬浮球，运行可信渠道已正式发布的安装包，例如发布后的 <code>GPT-Orb-Setup-2.2.0-x64.exe</code>，完成一次安装迁移。</li>
-<li>打开「GPT Usage Orb Safe」，点击「打开固定扩展文件夹」。这是当前用户数据目录中的固定 <code>Browser-Extension</code>，通常在 <code>%APPDATA%\GPT Usage Orb Safe</code> 下，以按钮打开的位置为准。</li>
-<li>Chrome 打开 <code>chrome://extensions</code>，Edge 打开 <code>edge://extensions</code>。开启「开发者模式」，加载这个固定目录。如果此前加载过旧解压目录，先移除旧项，再加载新目录一次。</li>
-<li>访问 <a href="https://chatgpt.com/settings/usage?tab=overview" rel="noopener noreferrer">chatgpt.com/settings/usage?tab=overview</a>。如需登录，只在确认地址正确的官方网站完成。</li>
-<li>点击悬浮球「复制本次配对码」，从浏览器工具栏打开扩展，粘贴并点击「连接并开始读取」。检查面板读取状态；只使用当前页面模式时需保留用量页，需要关页后继续读数时按下节开启定时刷新。</li>
+<li>更新至可信渠道正式发布的 2.3.0 桌面安装版。已有安装版可检查签名更新；若新包尚未发布，可按下节运行源码。先退出旧悬浮球。</li>
+<li>在 Windows PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后执行 <code>codex.cmd login</code>，在官方流程中使用与网页版相同的 ChatGPT 账号登录。已安装并登录的用户无需重复。npm 安装需要 Node.js/npm；Windows 使用 .cmd 入口，无需更改 PowerShell 执行策略。</li>
+<li>安装后重新打开终端与悬浮球，以取得最新环境。在概览「用量来源」选择「本机 Codex（实验性）」。填写整数 1–1440 分钟，默认 5，点击「保存间隔」，然后点击「开启自动读取」。</li>
+<li>点击「立即刷新」，确认成功读取时间及额度。以后保持悬浮球运行即可，浏览器可以关闭。</li>
 </ol>
-<p><strong>不要双击 <code>popup.html</code>。</strong>普通文件页没有扩展消息 API，必须先加载扩展再从工具栏打开。2.2.0 保留了 <code>sendMessage</code> 不可用时的加载指引。</p>
-<p class="muted">本扩展尚未上架商店。浏览器可能询问本地网络权限；它仅向本机 <code>127.0.0.1:43861</code> 同步数字。桌面退出、浏览器重启、扩展重载或更新后需要重新配对。</p>
-<h2>关闭用量页后定时刷新</h2>
-<p>2.2.0 的扩展弹窗提供「后台定时刷新」，间隔为 <strong>1–1440 分钟的整数，默认 5 分钟</strong>。先在官方页面登录并配对，再点击「开启后台刷新」，授予 <code>https://chatgpt.com/*</code> 可选网站权限。已有授权时可能不再弹窗，拒绝仍可使用当前页面模式。之后可点击「保存刷新间隔」调整周期。</p>
-<p>开启后可关闭原用量页。每轮新建不抢焦点的临时标签页，加载官方用量页，等待并读取可识别 DOM 数字，再关闭本轮创建且未被用户接管的页；不会操作已有标签页。扩展可点击「立即刷新」主动读取，或点击「关闭并撤销授权」停止任务并撤销网站权限。</p>
-<p><strong>浏览器和悬浮球须运行，官方网站须保持登录。</strong>休眠、退出登录、网站验证和后台限速可能阻止读取，定时不保证精确准点。浏览器重启或扩展重载后须重新配对并开启，只有间隔数字长期保留。登录凭据由浏览器与官方网站管理，不复制到本工具。</p>
-<p>失败或未识别不覆盖成功读数或成功时间。桌面的 3 分钟历史提示与刷新间隔独立：间隔超过 3 分钟时也可能显示「上次记录」。旧桌面可能仍显示「页面读取已超时」，请结合间隔和扩展状态判断。读取时间不代表官方后台刚更新统计。</p>
-<h2>以后怎样更新</h2>
-<ol>
-<li>已配置发布源的安装版默认在启动约 10 秒后、之后每 6 小时检查更新。设置中可关闭自动检查，也可手动点击「检查更新」。</li>
-<li>验证发布签名后自动下载，核对安装包完整性；准备好后点击「重启并更新」。安装前会再次校验，并备份显示设置与位置。</li>
-<li>新版桌面启动时同步固定目录中的扩展文件。若扩展有更新，点击扩展内「重新加载扩展」，再重新复制配对码，无需每次移除重装。</li>
-</ol>
-<p>普通退出不会自动安装待更新包。网络或校验失败会停止此次更新，当前版本仍可继续使用。更新包含桌面程序与 Electron 运行时，保留显示设置，不保留配对密钥。</p>
-<div class="callout"><strong>显示「尚未配置更新源」？</strong><br>只有发布仓库与签名公钥已配置的 Windows 安装版能在线更新。旧免安装版、开发运行或未配置源的试用安装包不会自动获得此功能。请等待发布者提供已启用的安装版，不要填入账号令牌。</div>
-<p>设置里的「打开更新备份文件夹」可查看 <code>recovery</code> 文件夹。它只有偏好设置备份，<strong>不是完整程序快照或安装失败后的自动回滚</strong>。安装中断可能需要可信安装包修复；恢复设置前先退出程序，再将选定备份复制为用户数据目录中的 <code>preferences.json</code>。</p>
-<h2>已克隆源码时更新扩展</h2>
-<p>Windows 上已有 Node.js 22.12+ 与本仓库时，在仓库目录先执行 <code>git pull --ff-only</code>；成功后执行 <code>npm run extension:update</code>。无需 <code>npm ci</code> 或重装桌面程序。</p>
-<p>命令只将扩展同步到 <code>%APPDATA%\GPT Usage Orb Safe\Browser-Extension</code> 并打印实际目录。若浏览器已加载该目录，在扩展管理页点击「重新加载」，确认版本 2.2.0 后重新配对。若仍加载 Downloads 下的旧目录，请先移除旧项，再加载固定目录一次；所选目录中必须直接包含 <code>manifest.json</code>。</p>
-<p>此方式运行本地源码，不经过发布安装包的签名验证；请先检查来自可信仓库的变更。普通用户继续使用应用内的签名更新。<strong>源码更新不代表新安装包已发布。</strong></p>
-<p>新版辅助命令支持旧扩展迁移并保留完整备份。2.1.1 等旧桌面不认识新清单，可能提示扩展目录更新失败，但保留新版文件、数字同步仍兼容；待正式桌面更新至 2.2.0 后解除警告。</p>
-<h2>日常使用与数字含义</h2>
-<p>拖动悬浮球移动，点击展开 / 收起。托盘菜单和 <code>Ctrl + Alt + G</code> 可找回面板。设置中可调整置顶、透明度、额度提醒和开机启动；开机启动默认关闭。</p>
+<p>界面提供「复制安装与登录命令」和「官方安装说明」，命令由你执行，工具不会自动安装或登录。首次官方登录可能打开浏览器，用量刷新不通过网页。API Key 登录不等于 ChatGPT 订阅登录，可能无法返回订阅额度。</p>
+<p>首次默认未启用；主动开启后，间隔和启用偏好保留，桌面重启会继续查询。「停止读取」停止查询，不退出官方账号。切换来源后，切回本机 Codex 需再次开启。官方 CLI 是独立依赖，不随悬浮球打包或自动更新。</p>
+<p>官方说明：<a href="https://learn.chatgpt.com/docs/codex/cli" rel="noopener noreferrer">Codex CLI</a> · <a href="https://learn.chatgpt.com/docs/auth" rel="noopener noreferrer">认证与凭据</a> · <a href="https://learn.chatgpt.com/docs/app-server" rel="noopener noreferrer">App Server</a>。</p>
+<h2>已有源码时运行新版</h2>
+<p>退出旧桌面程序。在可信仓库目录依次执行 <code>git pull --ff-only</code>、<code>npm ci</code>、<code>npm start</code>，每一步成功后再运行下一步。<code>npm ci</code> 需要网络下载固定依赖与 Electron，不要加 <code>--ignore-scripts</code>。</p>
+<p>源码运行不更新原安装版，也不提供安装版自动更新；仅 <code>npm run extension:update</code> 不能启用 CLI 来源。源码提交和草稿 Release 不等于正式安装包已发布。</p>
+<h2>读数表示什么</h2>
 <table><thead><tr><th>显示内容</th><th>含义</th></tr></thead><tbody>
-<tr><td>额度百分比</td><td>只显示页面明确标注且能识别的窗口额度，不把不同窗口相加。</td></tr>
-<tr><td>重置倒计时</td><td>依据可识别的页面时间计算。归零后等待页面确认，不自行补满额度。</td></tr>
-<tr><td>Token 数据</td><td>页面确实显示且能识别时才有值，缺失项为「—」。不保证覆盖普通 ChatGPT 对话，也不是 API 账单。</td></tr>
-<tr><td>页面读取时间</td><td>表示扩展读取页面的时间，不表示官方后台刚更新统计。过期内容会标为上次记录。</td></tr>
+<tr><td>额度窗口</td><td>官方返回的已用 / 剩余比例，各窗口独立，不相加。</td></tr>
+<tr><td>重置倒计时</td><td>依据官方返回时间计算，归零不自行补满额度。</td></tr>
+<tr><td>剩余重置次数</td><td>仅在响应提供时显示，未知为「—」。不会执行重置。</td></tr>
+<tr><td>独立额度</td><td>仅展示实际返回记录；没有 Spark 记录时不编造独立周额度。</td></tr>
+<tr><td>最近一日 Token</td><td>协议支持时返回的服务端最新日桶，显示对应日期；不是本机今日 Token。</td></tr>
+<tr><td>服务端累计 Token</td><td>官方返回范围内的累计；不扫描本机日志，不承诺覆盖全部 ChatGPT 对话或 API 账单。</td></tr>
+<tr><td>成功读取时间</td><td>表示查询成功，不代表官方服务器统计刚刚更新。</td></tr>
 </tbody></table>
-<p>当前页面模式在关页或跳转后停止；定时模式无须保留原用量页，但休眠、后台限速或页面改版仍可能阻止同步。需要核对时，请直接查看官方用量页。工具不会额外调用模型、代发对话或改变官方额度。</p>
-<h2>页面无法识别时</h2>
-<p>在扩展展开「页面未识别？手动填写可见数值」，只填官方页面明确显示的数字，未知项留空。这里填写<strong>已用百分比</strong>：页面写「剩余 80%」，应填「已用 20%」。重置时间使用电脑本地时区。</p>
-<p>手动提交后暂停自动读取，悬浮球标为「人工记录」，不会冒充后台实时数据。</p>
-<h2>账号、签名与安全边界</h2>
-<p>基础权限为 activeTab、scripting、storage、alarms 和本机同步；定时模式另申请可选 chatgpt.com 来源权限。浏览器授权覆盖该来源全部路径，采集代码只接受两个精确用量路径。「关闭并撤销授权」同时停止任务并撤销网站权限；切回当前页面或人工记录模式只停止任务，可能保留授权。也可在浏览器扩展管理中撤销授权。</p>
-<p>桌面没有 Codex 登录组件、OAuth 或账号接口调用；扩展不读取 Cookie、凭据文件、聊天内容或网页网络响应。本机服务验证来源、会话配对码与数字结构；渲染页面启用沙箱与上下文隔离。</p>
-<p>更新通过 HTTPS 访问固定 GitHub Release 来源与 GitHub 资源域名，公钥随应用发布，安装包必须匹配签名描述。更新请求不含用量或 GPT 凭据，没有自建云同步或额外遥测。</p>
-<p><strong>Ed25519 更新签名不等于 Windows 发布者证书。</strong>当前程序没有 Windows Authenticode 签名，首次安装可能提示未知发布者；请从可信渠道取得安装包。本工具不是 OpenAI 官方应用，不能防御已控制电脑或浏览器的恶意软件。</p>
-<h2>断开、旧版凭据与卸载</h2>
-<p>设置中的「断开同步并使旧配对码失效」撤销本次配对，桌面退出也停止接收数字。若使用过 1.0.0 的登录功能，请单独确认旧版退出成功，必要时使用 OpenAI 官方会话管理。2.x 不读取、复用或删除旧版账号凭据。</p>
-<p>卸载前关闭开机启动，退出程序，在浏览器移除扩展，再从 Windows「已安装的应用」卸载「GPT Usage Orb Safe」。用户数据目录默认保留设置、扩展和备份，确认不需要后可自行删除；这不会退出浏览器中的官方账号。</p>
-<h2>验证范围</h2>
-<p>已用合成数据检查 Node 接收边界、签名与更新流程、安装包篡改、设置备份、页面 DOM、离屏界面，以及 Electron Chromium 中实际 MV3 扩展弹窗和后台传输。</p>
-<p><strong>尚未完成实体 Windows 安装 / 升级与真实账号页面验证。</strong>Electron 测试不等于完整 Chrome / Edge 工具栏、临时页面授权及本地网络权限流程验收。浏览器版本、企业策略及网站改版仍可能影响运行。</p>
-<p>更多安全边界：<a href="SECURITY.md">SECURITY.md</a>。源码包含完整使用说明、自动测试和维护者发布流程。</p>
-<footer>GPT 悬浮球 2.2.0 · 独立制作 · MIT 许可</footer>
+<p>CLI 缺失、登录过期、离线或接口变化时显示提示，保留上次成功记录和时间；未知项不推算。电脑休眠和服务端统计延迟会影响更新。App Server 属实验性接口，不能保证所有 CLI 版本与账号结构都兼容。</p>
+<h2>浏览器扩展作为备用</h2>
+<ol>
+<li>概览「用量来源」选择「浏览器扩展（备用）」。打开固定扩展文件夹，通常是 <code>%APPDATA%\GPT Usage Orb Safe\Browser-Extension</code>。</li>
+<li>Chrome 打开 <code>chrome://extensions</code>，Edge 打开 <code>edge://extensions</code>，开启开发者模式并加载该目录。选中的目录必须直接含 <code>manifest.json</code>，不要双击 <code>popup.html</code>。</li>
+<li>访问 <a href="https://chatgpt.com/settings/usage?tab=overview" rel="noopener noreferrer">官方用量页</a>并完成官方登录。复制悬浮球当前配对码，在浏览器工具栏的扩展中粘贴并连接。</li>
+</ol>
+<p>当前页面模式需保留用量页。扩展的备用「后台定时刷新」需主动授予 <code>https://chatgpt.com/*</code> 权限，每轮临时打开非活动用量页；只清理本轮创建且未被用户接管的页面。浏览器授权覆盖整个来源，代码只接受两个精确用量路径。</p>
+<p><strong>浏览器备用模式需要浏览器运行，本机 Codex 模式不需要。</strong>桌面退出、浏览器重启或扩展重载会使配对失效，扩展重启还需重新开启定时。迁移到本机 Codex 前，请在扩展点击「关闭并撤销授权」，避免旧任务继续尝试打开页面。</p>
+<p>只维护扩展时，在可信仓库执行 <code>git pull --ff-only</code>，成功后执行 <code>npm run extension:update</code>，再在浏览器重新加载并配对。该命令不更新桌面。浏览器仍加载 Downloads 旧目录时需先迁移到固定目录一次。</p>
+<h2>日常使用与应用更新</h2>
+<p>拖动悬浮球移动，点击展开 / 收起。托盘及 <code>Ctrl + Alt + G</code> 可找回面板。设置可调整置顶、透明度、提醒和开机启动，开机启动默认关闭。</p>
+<p>已配置更新源的安装版启动约 10 秒后、此后每 6 小时检查更新，也可手动检查。验证 Ed25519 发布签名后下载，再校验完整性；由你点击「重启并更新」。普通退出不安装待更新包，失败保留当前版本。更新包含桌面、Electron 和备用扩展，不包含官方 CLI。</p>
+<p>显示设置和位置保留。固定目录的扩展若更新需在浏览器手动重新加载，重新配对；仅使用本机 Codex 无需加载扩展。开发运行、旧便携版和未配置发布源的安装版没有安装版自动更新能力。</p>
+<p>安装前在 <code>recovery</code> 备份偏好设置，<strong>不是完整程序快照或 NSIS 原子回滚</strong>。安装中断可能需可信安装包修复；手动恢复设置前先退出程序。</p>
+<h2>账号和安全边界</h2>
+<p>悬浮球通过 stdio 发送固定查询，不读取或复制 <code>auth.json</code>、Cookie、密码或令牌，不记录原始 RPC，不扫描本机会话日志。官方 CLI 自己管理登录及续期，可能读写自己的凭据；文件或系统凭据库存储取决于原配置，不能承诺天然加密。</p>
+<p>浏览器备用模式只向 <code>127.0.0.1:43861</code> 发送数值，校验来源、配对与字段。切换来源不会因 CLI 失败而自动打开网页，也不把两种记录混成账号总量。</p>
+<p>更新访问固定 GitHub Release 来源，不含用量和账号凭据，不需要客户端 GitHub 登录或 PAT。没有自建云用量同步或额外遥测。<strong>Ed25519 更新签名不等于 Windows Authenticode 发布者证书</strong>，当前没有 Windows 发布者签名。</p>
+<p>本工具不能防御已控制本机、CLI 或浏览器的恶意软件。停止读取或卸载不等于退出官方登录；需要时自行使用 <code>codex.cmd logout</code>。1.0.0 的旧凭据仍需单独通过旧版或官方会话管理撤销。</p>
+<h2>验证与卸载</h2>
+<p>自动测试使用合成协议和数据，覆盖查询、异常、来源切换、数据校验及既有更新边界。<strong>真实 Windows 安装 / 升级、官方 CLI 登录及账号额度仍需实机验收。</strong>已有 Electron / MV3 检查也不等于完整 Chrome / Edge 权限流程通过。</p>
+<p>卸载前停止开机启动并退出悬浮球，不再使用扩展时在浏览器移除，再从 Windows 已安装应用卸载。用户目录默认保留设置和备份。卸载悬浮球不卸载 CLI，也不退出官方账号。</p>
+<p>完整说明：<a href="README.md">README.md</a> · <a href="SECURITY.md">SECURITY.md</a> · <a href="RELEASE.md">发布流程</a>。</p>
+<footer>GPT 悬浮球 2.3.0 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>
 </main></body></html>

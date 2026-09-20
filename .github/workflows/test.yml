@@ -38,3 +38,13 @@ jobs:
           PYTHONUTF8: '0'
           PYTHONWARNDEFAULTENCODING: '1'
           PYTHONWARNINGS: 'error::EncodingWarning'
+      - name: Keep the tested Windows installer for manual review
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-review-build
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/GPT-Orb-Setup-*-x64.exe
+            dist/GPT-Orb-*-Source.zip

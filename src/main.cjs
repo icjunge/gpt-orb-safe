@@ -8,10 +8,13 @@ const {UsageBridge} = require('./bridge.cjs');
 const {syncExtension} = require('./extension-store.cjs');
 const {UpdateManager} = require('./updater.cjs');
 const {validSettings,allowedSender} = require('./security.cjs');
+const {CodexProvider} = require('./codex-provider.cjs');
+const {discoverCodex} = require('./codex-discovery.cjs');
 app.setName('GPT Usage Orb Safe');
 app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
+let codexProvider=null;
 const unavailableUpdates=()=>({status:'unconfigured',currentVersion:app.getVersion(),availableVersion:null,progress:null,
   message:'请使用支持更新的安装版，并启用发布源。',lastCheckedAt:null,repository:null});
 let settings=validSettings({}),savedPosition=null,snapshot=null,error=null,notified=new Set();
@@ -27,8 +30,15 @@ function saveSettings(){
     fs.writeFileSync(temporary,JSON.stringify({settings,position:savedPosition},null,2));fs.renameSync(temporary,settingsPath());
   }catch{}
 }
+function nativeStatus(){return codexProvider?.getStatus()||{enabled:false,running:false,state:'disabled',message:'点击开启本机读取。',
+  lastSuccessAt:null,nextRunAt:null,intervalMinutes:settings.refreshMinutes};}
+function staleAfterMs(){return settings.usageSource==='codex-cli'?settings.refreshMinutes*60000+90000:180000;}
+function currentError(){const status=nativeStatus();return settings.usageSource==='codex-cli'
+  ?(['not-found','needs-login','unsupported','error'].includes(status.state)?status.message:null):error;}
 function state(){const status=bridge?.getStatus()||{listening:false,connected:false,lastReceivedAt:null,port:43861};
-  return {status:error?'error':snapshot?'ready':status.listening?'waiting':'starting',bridge:status,snapshot,settings,error,
+  const activeError=currentError();
+  return {status:activeError?'error':snapshot?'ready':settings.usageSource==='codex-cli'||status.listening?'waiting':'starting',
+    bridge:status,snapshot,settings,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
     updates:updateManager?.snapshot()||unavailableUpdates(),
     extension:extensionInfo?{version:extensionInfo.version,changed:extensionInfo.changed,needsReload:extensionInfo.changed,error:extensionInfo.error||null}:null};}
 function clampPosition(position,width=92,height=104){
@@ -76,33 +86,43 @@ function trayMenu(){return Menu.buildFromTemplate([
   {type:'separator'},
   {label:'始终置顶',type:'checkbox',checked:settings.alwaysOnTop,click:item=>applySettings({alwaysOnTop:item.checked})},
   {label:'开机启动',type:'checkbox',checked:settings.autoStart,click:item=>applySettings({autoStart:item.checked})},
+  {label:'立即刷新 Codex 额度',enabled:settings.usageSource==='codex-cli'&&settings.codexEnabled,click:()=>void codexProvider?.refresh()},
   {label:'检查程序更新',click:()=>void updateManager?.check({download:true})},
   {label:'打开官方用量页面',click:()=>void shell.openExternal('https://chatgpt.com/settings/usage?tab=overview')},
   {label:'断开本机同步',click:disconnect},{type:'separator'},{label:'退出 GPT 悬浮球',click:()=>app.quit()}
 ]);}
 function createTray(){tray=new Tray(nativeImage.createFromPath(path.join(__dirname,'../assets/orb.png')).resize({width:32,height:32}));
-  tray.setToolTip('GPT 悬浮球 · 浏览器只读同步');tray.setContextMenu(trayMenu());
+  tray.setToolTip('GPT 悬浮球 · 本机额度查询');tray.setContextMenu(trayMenu());
   tray.on('click',togglePanel);tray.on('double-click',showPanel);tray.on('balloon-click',showPanel);
 }
 function applySettings(input){
   const next=validSettings(input,settings);
+  const sourceChanged=next.usageSource!==settings.usageSource;
+  if(sourceChanged||next.usageSource!=='codex-cli')next.codexEnabled=false;
+  const nativeChanged=sourceChanged||next.codexEnabled!==settings.codexEnabled||next.refreshMinutes!==settings.refreshMinutes;
   if(next.autoStart!==settings.autoStart&&process.platform==='win32'){
     app.setLoginItemSettings({openAtLogin:next.autoStart,path:process.execPath,args:['--startup']});
     next.autoStart=app.getLoginItemSettings({path:process.execPath,args:['--startup']}).openAtLogin;
   }
   const newlyEnabled=next.autoCheckUpdates&&!settings.autoCheckUpdates;
   settings=next;if(newlyEnabled)void updateManager?.check({download:true});
+  if(sourceChanged){snapshot=null;notified.clear();bridge?.rotateKey();}
+  if(nativeChanged&&codexProvider){
+    if(settings.usageSource==='codex-cli'&&settings.codexEnabled)void codexProvider.start(settings.refreshMinutes);
+    else codexProvider.stop();
+  }
   orbWindow.setAlwaysOnTop(settings.alwaysOnTop,'floating');panelWindow.setAlwaysOnTop(settings.alwaysOnTop,'floating');
   orbWindow.setOpacity(settings.opacity);saveSettings();tray?.setContextMenu(trayMenu());publish();return{ok:true};
 }
-function disconnect(){snapshot=null;notified.clear();bridge?.rotateKey();publish();}
+function disconnect(){codexProvider?.stop();settings.codexEnabled=false;saveSettings();snapshot=null;notified.clear();bridge?.rotateKey();tray?.setContextMenu(trayMenu());publish();}
 function notifyLow(){
-  if(!settings.notifications||snapshot?.source!=='official-page'||Date.now()-snapshot.capturedAt>180000)return;
+  if(!settings.notifications||!['official-page','codex-cli'].includes(snapshot?.source)||Date.now()-snapshot.capturedAt>staleAfterMs())return;
+  if(snapshot.source==='codex-cli'&&!nativeStatus().enabled)return;
   for(const w of snapshot.windows){const remaining=100-w.usedPercent;
     if(remaining>20||!w.resetAt||w.resetAt<=Date.now())continue;
-    const threshold=remaining<=5?5:20,id=`${w.kind}:${Math.floor(w.resetAt/60000)}:${threshold}`;
+    const threshold=remaining<=5?5:20,id=`${w.id||w.kind}:${Math.floor(w.resetAt/60000)}:${threshold}`;
     if(notified.has(id))continue;notified.add(id);
-    const body=`官方页面读取的额度剩余 ${Math.round(remaining)}%。以官方页面为准。`;
+    const body=`${snapshot.source==='codex-cli'?'Codex 查询的':'官方页面读取的'}额度剩余 ${Math.round(remaining)}%。以官方实际额度为准。`;
     if(process.platform==='win32'&&tray&&!tray.isDestroyed())tray.displayBalloon({title:'GPT 额度提醒',content:body,iconType:'info',noSound:true,respectQuietTime:true});
     else if(Notification.isSupported()){const n=new Notification({title:'GPT 额度提醒',body,silent:true});n.on('click',showPanel);n.show();}
   }
@@ -110,8 +130,8 @@ function notifyLow(){
 }
 function publish(){if(quitting)return;const next=state();for(const win of[orbWindow,panelWindow])if(win&&!win.isDestroyed())win.webContents.send('orb:state',next);
   const most=snapshot?.windows?.slice().sort((a,b)=>b.usedPercent-a.usedPercent)[0];
-  const stale=snapshot&&Date.now()-snapshot.capturedAt>180000;
-  tray?.setToolTip(most?`GPT 悬浮球 · ${snapshot.source==='manual-page'?'手动记录':stale?'较早读取':'页面剩余'} ${Math.round(100-most.usedPercent)}%`:'GPT 悬浮球 · 浏览器只读同步');
+  const stale=snapshot&&(Date.now()-snapshot.capturedAt>staleAfterMs()||currentError()||(snapshot.source==='codex-cli'&&!nativeStatus().enabled));
+  tray?.setToolTip(most?`GPT 悬浮球 · ${snapshot.source==='manual-page'?'手动记录':stale?'上次记录':snapshot.source==='codex-cli'?'Codex 剩余':'页面剩余'} ${Math.round(100-most.usedPercent)}%`:'GPT 悬浮球 · 本机额度查询');
 }
 function registerIpc(){
   ipcMain.handle('orb:state',event=>allowedSender(event,trustedWindows)?state():null);
@@ -122,6 +142,16 @@ function registerIpc(){
       case'hidePanel':panelWindow.hide();break;
       case'copyPairingCode':if(!bridge?.getStatus().listening)return{ok:false,error:'本机同步尚未启动'};clipboard.writeText(bridge.getPairingCode());break;
       case'disconnect':disconnect();break;
+      case'enableCodex':
+        if(settings.usageSource!=='codex-cli')return{ok:false,error:'请先选择本机 Codex 数据来源。'};
+        if(!codexProvider)return{ok:false,error:'本机读取尚未准备好，请稍后重试。'};
+        return applySettings({codexEnabled:true});
+      case'disableCodex':return applySettings({codexEnabled:false});
+      case'refreshCodex':
+        if(settings.usageSource!=='codex-cli'||!settings.codexEnabled||!codexProvider)return{ok:false,error:'请先开启本机 Codex 读取。'};
+        void codexProvider.refresh();break;
+      case'copyCodexSetup':clipboard.writeText('npm.cmd install -g @openai/codex\r\nif ($LASTEXITCODE -eq 0) { codex.cmd login }');break;
+      case'openCodexHelp':await shell.openExternal('https://developers.openai.com/codex/cli');break;
       case'openDashboard':await shell.openExternal('https://chatgpt.com/settings/usage?tab=overview');break;
       case'openExtensionFolder':{
         if(!extensionInfo?.path||extensionInfo.error)return{ok:false,error:extensionInfo?.error||'扩展文件尚未准备好，请重新启动程序。'};
@@ -155,6 +185,12 @@ else{
     fs.mkdirSync(app.getPath('userData'),{recursive:true});
     extensionInfo=await syncExtension({sourceDir:path.join(app.getAppPath(),'extension'),userData:app.getPath('userData')});
     registerIpc();createWindows();createTray();
+    const codexWorkingDirectory=path.join(app.getPath('userData'),'codex-query');
+    fs.mkdirSync(codexWorkingDirectory,{recursive:true});
+    codexProvider=new CodexProvider({discover:()=>discoverCodex(),cwd:codexWorkingDirectory,
+      intervalMinutes:settings.refreshMinutes,onState:publish,
+      onSnapshot:value=>{if(!quitting&&settings.usageSource==='codex-cli'&&settings.codexEnabled){snapshot=value;publish();notifyLow();}},
+      onClear:()=>{if(settings.usageSource==='codex-cli'){snapshot=null;notified.clear();publish();}}});
     // NSIS installs supply app-update.yml. Legacy portable packages cannot safely
     // use this updater and never fall back to an unsigned download-and-run path.
     if(process.platform==='win32'&&app.isPackaged&&!process.env.PORTABLE_EXECUTABLE_FILE&&
@@ -167,15 +203,16 @@ else{
     // Re-register the preserved preference with the new stable install path when
     // migrating from the portable release; only when startup was already enabled.
     if(settings.autoStart&&process.platform==='win32')app.setLoginItemSettings({openAtLogin:true,path:process.execPath,args:['--startup']});
-    bridge=new UsageBridge({onSnapshot:value=>{snapshot=value;publish();notifyLow();},onConnection:()=>publish()});
+    bridge=new UsageBridge({onSnapshot:value=>{if(settings.usageSource==='browser'){snapshot=value;publish();notifyLow();}},onConnection:()=>publish()});
     try{await bridge.start();}catch{error='本机同步端口 43861 无法启动。请关闭其他新版悬浮球后重新打开。';}publish();
+    if(settings.usageSource==='codex-cli'&&settings.codexEnabled)void codexProvider.start(settings.refreshMinutes);
     globalShortcut.register('CommandOrControl+Alt+G',togglePanel);
     for(const event of['display-metrics-changed','display-removed'])screen.on(event,()=>{const p=clampPosition(orbWindow.getBounds());orbWindow.setPosition(p.x,p.y);anchorPanel();});
     tick=setInterval(publish,30000);
-  }).catch(()=>{dialog.showErrorBox('GPT 悬浮球启动失败','请重新打开程序；若仍无法启动，请使用完整安装包修复。你的账号登录由浏览器保管。');app.quit();});
+  }).catch(()=>{dialog.showErrorBox('GPT 悬浮球启动失败','请重新打开程序；若仍无法启动，请使用完整安装包修复。官方账号凭据不由悬浮球保存。');app.quit();});
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(quitting)return;event.preventDefault();quitting=true;
-    clearInterval(tick);clearInterval(updateTimer);clearTimeout(firstUpdateTimer);clearTimeout(saveTimer);updateManager?.stop();saveSettings();snapshot=null;globalShortcut.unregisterAll();tray?.destroy();
+    clearInterval(tick);clearInterval(updateTimer);clearTimeout(firstUpdateTimer);clearTimeout(saveTimer);updateManager?.stop();codexProvider?.stop();saveSettings();snapshot=null;globalShortcut.unregisterAll();tray?.destroy();
     Promise.resolve(bridge?.close()).finally(()=>app.quit());
   });
 }
