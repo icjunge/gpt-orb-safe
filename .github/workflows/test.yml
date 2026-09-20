@@ -31,3 +31,10 @@ jobs:
         run: npm run build:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify release ZIPs with Windows default encoding
+        if: runner.os == 'Windows'
+        run: python scripts/package_windows.py --source-only --extension-zip --output dist
+        env:
+          PYTHONUTF8: '0'
+          PYTHONWARNDEFAULTENCODING: '1'
+          PYTHONWARNINGS: 'error::EncodingWarning'

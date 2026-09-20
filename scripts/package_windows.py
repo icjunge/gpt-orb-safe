@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Package the Windows x64 orb with pinned Electron and no account-auth runtime.
+"""Package source and browser-extension archives; retain legacy portable packaging.
 
-Requires Python 3.10+. Run: python scripts/package_windows.py --source-zip --extension-zip
-The portable application itself does not require Python or Node.js.
+Requires Python 3.10+. Run: python scripts/package_windows.py --source-only --extension-zip
+Version 2.1+ Windows installers are built separately with npm run build:win.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import zipfile
 
 
 PROJECT = Path(__file__).resolve().parent.parent
-LOCK = json.loads((PROJECT / "scripts/runtime-lock.json").read_text())
+LOCK = json.loads((PROJECT / "scripts/runtime-lock.json").read_text(encoding="utf-8"))
 EXCLUDED_PARTS = {"__pycache__", "node_modules", "vendor", "build", "dist"}
 
 
@@ -82,11 +82,11 @@ def copy_tree(source: Path, destination: Path) -> None:
 
 
 def verify_extension() -> None:
-    manifest = json.loads((PROJECT / "extension/manifest.json").read_text())
-    identity = json.loads((PROJECT / "extension-identity.json").read_text())
+    manifest = json.loads((PROJECT / "extension/manifest.json").read_text(encoding="utf-8"))
+    identity = json.loads((PROJECT / "extension-identity.json").read_text(encoding="utf-8"))
     if manifest.get("manifest_version") != 3 or manifest.get("key") != identity["publicKey"]:
         raise RuntimeError("Extension identity or manifest version mismatch")
-    package = json.loads((PROJECT / "package.json").read_text())
+    package = json.loads((PROJECT / "package.json").read_text(encoding="utf-8"))
     if manifest.get("version") != package["version"]:
         raise RuntimeError("Extension and application versions do not match")
     key_bytes = base64.b64decode(identity["publicKey"], validate=True)
@@ -174,7 +174,7 @@ def main() -> None:
     args = parser.parse_args()
     args.cache, args.output = args.cache.resolve(), args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
-    package = json.loads((PROJECT / "package.json").read_text())
+    package = json.loads((PROJECT / "package.json").read_text(encoding="utf-8"))
     if args.source_only:
         source_archive(args.output, package["version"])
         if args.extension_zip:
