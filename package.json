@@ -1,7 +1,7 @@
 {
   "name": "gpt-usage-orb-safe",
   "productName": "GPT Usage Orb Safe",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "A local desktop usage orb synchronized from visible official page data; no account authorization.",
   "main": "src/main.cjs",
   "author": "GPT Usage Orb contributors",
@@ -14,7 +14,8 @@
     "release:configure": "node scripts/configure-release.cjs",
     "release:key": "node scripts/generate-signing-key.cjs",
     "repository:setup": "node scripts/setup-repository.cjs",
-    "release:setup": "node scripts/setup-release.cjs"
+    "release:setup": "node scripts/setup-release.cjs",
+    "extension:update": "node scripts/update-extension.cjs"
   },
   "devDependencies": {
     "electron": "44.4.3",

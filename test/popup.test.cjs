@@ -46,7 +46,9 @@ function harness(options = {}) {
   const calls = [];
   let reloadCalls = 0;
   const intervals = new Map();
+  const timeouts = new Map();
   let nextInterval = 0;
+  let nextTimeout = 0;
   let transport = options.transport || (async () => healthy());
   const runtime = { id: ID, reload() { reloadCalls++; }, async sendMessage(message) {
     calls.push(structuredClone(message));
@@ -69,12 +71,19 @@ function harness(options = {}) {
     location: new URL(options.url || EXTENSION_URL), URL,
     setInterval(fn, delay) { const id = ++nextInterval; intervals.set(id, { fn, delay }); return id; },
     clearInterval(id) { intervals.delete(id); },
-    setTimeout, clearTimeout
+    setTimeout(fn, delay) { const id = ++nextTimeout; timeouts.set(id, { fn, delay }); return id; },
+    clearTimeout(id) { timeouts.delete(id); }
   });
   vm.runInContext(source, context, { filename: 'popup.js' });
   return { context, calls, intervals, node: id => document.getElementById(id),
     reloadCalls: () => reloadCalls,
     setTransport(fn) { transport = fn; },
+    async expireTimers(delay) {
+      for (const [id, timer] of [...timeouts]) {
+        if (timer.delay === delay) { timeouts.delete(id); timer.fn(); }
+      }
+      await flush();
+    },
     async poll() { for (const timer of [...intervals.values()]) timer.fn(); await flush(); },
     async submit() { document.getElementById('pair-form').dispatch('submit'); await flush(); },
     visibleText() { return [...nodes.values()].map(n => n.textContent).join('\n'); }
@@ -168,11 +177,12 @@ test('a healthy extension enables pairing, sends the code once, and clears the i
   assert.equal(h.visibleText().includes(PAIRING_CODE), false);
 });
 
-test('an unavailable service worker disables actions and can recover on the next status poll', async () => {
+test('an unavailable service worker leaves pairing editable and can recover on the next status poll', async () => {
   const h = harness({ transport: async () => { throw new Error('Could not establish connection. Receiving end does not exist.'); } });
   await flush();
   assert.match(h.node('status').textContent, /扩展后台.*无法响应/);
-  for (const id of ['code', 'start', 'refresh', 'manual-send']) assert.equal(h.node(id).disabled, true);
+  for (const id of ['code', 'start']) assert.equal(h.node(id).disabled, false);
+  for (const id of ['refresh', 'manual-send']) assert.equal(h.node(id).disabled, true);
   assert.equal(h.node('reload-extension').disabled, false, 'Local recovery remains available without the service worker');
   assert.doesNotMatch(h.visibleText(), /Receiving end does not exist|Could not establish/);
   assert.ok(h.intervals.size > 0, 'Valid extension contexts should be able to recover');
@@ -180,6 +190,91 @@ test('an unavailable service worker disables actions and can recover on the next
   await h.poll();
   assert.match(h.node('status').textContent, /同步/);
   for (const id of ['code', 'start', 'refresh', 'manual-send']) assert.equal(h.node(id).disabled, false);
+});
+
+for (const [tabState, expected] of [
+  ['no-tab', /未找到当前标签页/],
+  ['url-unavailable', /尚未获得当前页授权/],
+  ['unsupported-page', /请打开官方用量页/]
+]) {
+  test(`pairing stays editable with a useful explanation for ${tabState}`, async () => {
+    const h = harness({ transport: async message => message.type === 'orb:start'
+      ? { ok: false, message: '请从官方用量页的工具栏打开扩展后重试。' }
+      : healthy({ paired: false, onUsagePage: false, tabState }) });
+    await flush();
+    assert.match(h.node('status').textContent, expected);
+    assert.equal(h.node('code').disabled, false);
+    assert.equal(h.node('start').disabled, false);
+    h.node('code').value = PAIRING_CODE;
+    await h.poll();
+    assert.equal(h.node('code').value, PAIRING_CODE, 'Status polling preserves user input');
+    assert.equal(h.node('code').disabled, false);
+    assert.equal(h.node('manual-send').disabled, true);
+    await h.submit();
+    assert.equal(h.calls.filter(m => m.type === 'orb:start').length, 1);
+    assert.match(h.node('message').textContent, /官方用量页/);
+    assert.equal(h.node('code').value, '');
+    assert.equal(h.node('code').disabled, false, 'A rejected pairing can be corrected');
+    assert.equal(h.visibleText().includes(PAIRING_CODE), false);
+  });
+}
+
+test('a hung status cannot block typing, start an unbounded poll queue, or prevent pairing', async () => {
+  const h = harness({ transport: message => message.type === 'orb:status'
+    ? new Promise(() => {}) : Promise.resolve({ ok: true }) });
+  await flush();
+  assert.equal(h.node('code').disabled, false, 'Typing is available before the first status response');
+  for (let i = 0; i < 5; i++) await h.poll();
+  assert.equal(h.calls.length, 1, 'Do not overlap automatic status requests');
+  await h.expireTimers(5000);
+  assert.match(h.node('status').textContent, /扩展后台.*无法响应/);
+  assert.equal(h.node('code').disabled, false);
+  assert.equal(h.node('reload-extension').disabled, false);
+  await h.poll(); // Another status now hangs while the user submits.
+  h.node('code').value = PAIRING_CODE;
+  await h.submit();
+  assert.equal(h.calls.filter(m => m.type === 'orb:start').length, 1,
+    'Pairing does not wait for a status request');
+  assert.equal(h.node('code').disabled, false, 'Completed action releases busy before its status query');
+  await h.expireTimers(5000);
+  assert.equal(h.node('code').disabled, false);
+});
+
+test('a hung pairing releases the input after timeout without automatic resubmission', async () => {
+  let finish;
+  const h = harness({ transport: message => message.type === 'orb:start'
+    ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(healthy({ paired: false })) });
+  await flush();
+  h.node('code').value = PAIRING_CODE;
+  await h.submit();
+  assert.equal(h.node('code').disabled, true);
+  assert.equal(h.node('reload-extension').disabled, false);
+  await h.expireTimers(10000);
+  assert.equal(h.node('code').disabled, false);
+  assert.equal(h.node('start').disabled, false);
+  assert.match(h.node('message').textContent, /响应超时.*尚未确认操作结果/);
+  assert.equal(h.calls.filter(m => m.type === 'orb:start').length, 1);
+  finish({ ok: true });
+  await flush();
+  assert.match(h.node('message').textContent, /尚未确认操作结果/,
+    'A late command response cannot claim confirmed success');
+  assert.equal(h.node('code').value, '');
+});
+
+test('a stale status response cannot overwrite a newer pairing result or entered code', async () => {
+  let oldStatus;
+  const h = harness({ transport: () => new Promise(resolve => { oldStatus = resolve; }) });
+  await flush();
+  h.setTransport(async message => message.type === 'orb:status' ? healthy() : { ok: true });
+  h.node('code').value = PAIRING_CODE;
+  await h.submit();
+  assert.match(h.node('status').textContent, /正在同步/);
+  h.node('code').value = 'NEW_LOCAL_INPUT';
+  oldStatus(healthy({ onUsagePage: false, tabState: 'unsupported-page' }));
+  await flush();
+  assert.match(h.node('status').textContent, /正在同步/);
+  assert.equal(h.node('code').value, 'NEW_LOCAL_INPUT');
+  assert.equal(h.node('code').disabled, false);
 });
 
 test('explicit reload works while unpaired and does not send a command or persist a pairing code', async () => {

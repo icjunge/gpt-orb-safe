@@ -1,4 +1,4 @@
-# 维护与发布 · 2.1.1
+# 维护与发布 · 2.1.2
 
 本项目的更新路径为：提交代码 → 稳定版本标签 → GitHub Actions 构建安装包 → 受保护环境签名 → 草稿 Release → 人工审核发布 → 客户端验证并下载 → 用户点击「重启并更新」。创建仓库本身不会让已安装客户端自动获得更新能力。
 
@@ -21,7 +21,7 @@ npm run release:setup -- icjunge/gpt-orb-safe
 
 如果已克隆仓库，直接进入已有目录并确保 `main` 已与远程同步，不要重复克隆到同一位置。此初始化脚本只用 Node.js 内置模块，不需要先运行 `npm ci`。它会检查仓库、当前分支和发布保护，创建或复用仓库外的本地 Ed25519 私钥，经标准输入将它交给 GitHub 的 `release` 环境 Secret，再把公钥写入 `update-config.json`。不同的既有环境保护或签名公钥会使操作停止，不会被覆盖。运行 `npm run release:setup -- icjunge/gpt-orb-safe --dry-run` 可只检查，不写入。
 
-脚本不自动提交、推送或发布。成功后按它打印的命令提交和推送 `update-config.json`，再创建并推送 `v2.1.1` 标签。保护的签名作业会等待你在 GitHub Actions 审核；完成后生成草稿 Release，检查安装包并正式发布。为便于单人维护，初始化允许发布者审核自己的发布；脚本不会执行审核或跳过审核。
+脚本不自动提交、推送或发布。成功后按它打印的命令提交和推送 `update-config.json`，再创建并推送 `v2.1.2` 标签。保护的签名作业会等待你在 GitHub Actions 审核；完成后生成草稿 Release，检查安装包并正式发布。为便于单人维护，初始化允许发布者审核自己的发布；脚本不会执行审核或跳过审核。
 
 初始化会显示当前阶段。若 Git 检查失败，错误会指出固定操作名、错误类别和可用的退出码，底层输出仍隐藏，避免泄露凭据。只有查询远端 `main` 的只读操作遇到明确临时连接故障时才自动重试一次；认证、证书及其他错误会直接停止。没有明确连接错误的命令超时也可能是等待凭据，因此不会自动重试。GitHub 写入操作不会自动重试。
 
@@ -91,12 +91,12 @@ gh secret set ORB_UPDATE_PRIVATE_KEY --repo OWNER/REPOSITORY --env release < /se
 
 1. 更新 `package.json` 与 `package-lock.json` 的版本（例如 `npm version 2.1.2 --no-git-tag-version`），同时将 `extension/manifest.json` 的 `version` 改为完全相同的 `X.Y.Z`（各段不带前导零且不超过 65535）。更新说明文档。
 2. 执行 `npm test` 和 `node scripts/validate-release.cjs`。需要预览 Windows 安装包时，在 Windows 构建环境执行 `npm run build:win`；安装包位于 `dist/GPT-Orb-Setup-X.Y.Z-x64.exe`。此步骤只是构建，不上传发布。
-3. 提交并推送代码，再创建与应用版本完全相同的 `vX.Y.Z` 标签并推送。例如首次版本：
+3. 提交并推送代码，再创建与应用版本完全相同的 `vX.Y.Z` 标签并推送。例如当前版本：
 
 ```sh
-git tag v2.1.1
+git tag v2.1.2
 git push origin HEAD
-git push origin v2.1.1
+git push origin v2.1.2
 ```
 
 `.github/workflows/release.yml` 会在 Windows runner 构建并测试，用 Python 生成源码和扩展 ZIP；后续发布作业校验仓库、公钥、版本标签，签名真实安装包，并创建**草稿** Release。手动运行工作流也必须选择相应版本标签；默认分支不是发行入口。
@@ -131,6 +131,8 @@ python scripts/package_windows.py --source-only --extension-zip --output dist
 2.1+ 不再用此 Python 脚本构建便携 Windows 包；安装版使用 electron-builder。所有构建依赖均通过 lockfile 固定，但首次下载依赖仍需要可用网络。
 
 ## 6. 客户端与恢复边界
+
+维护者调试扩展时，可在 Windows 仓库目录运行 `npm run extension:update`，无需 `npm ci`。它只把本地 `extension` 同步到当前用户默认的 `%APPDATA%\GPT Usage Orb Safe\Browser-Extension`，使用与桌面一致的清单校验、完整替换和防降级策略；不读取浏览器配置，不启动桌面，不自动重载。该源码路径不经过安装包签名验证，普通用户仍使用正式签名更新。浏览器若加载了其他目录，必须先迁移到打印出的固定目录一次；之后在扩展管理页重载并重新配对即可。这个命令既不发布 Release，也不改变安装的桌面版本。
 
 应用名与用户数据目录保持为 `GPT Usage Orb Safe`。从旧便携版迁移到 NSIS 需要一次安装；后续由应用验证、下载，用户点击后重启更新。安装器按当前用户安装，不要求应用用户提供 GitHub 或 GPT 凭据。
 

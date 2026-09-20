@@ -24,6 +24,7 @@ function harness() {
   const requests = [];
   const injections = [];
   const stops = [];
+  const mutations = [];
   const access = [];
   const state = { tab: { id: 7, url: PAGE }, status: 204 };
   const chrome = {
@@ -32,10 +33,10 @@ function harness() {
     storage: { session: {
       setAccessLevel: async value => { access.push(value); },
       get: async key => ({ [key]: data[key] === undefined ? undefined : structuredClone(data[key]) }),
-      set: async values => Object.assign(data, structuredClone(values)),
-      remove: async keys => { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; }
+      set: async values => { mutations.push('set'); Object.assign(data, structuredClone(values)); },
+      remove: async keys => { mutations.push('remove'); for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; }
     } },
-    tabs: { query: async () => [structuredClone(state.tab)], get: async () => structuredClone(state.tab),
+    tabs: { query: async () => state.tab ? [structuredClone(state.tab)] : [], get: async () => structuredClone(state.tab),
       sendMessage: async (...args) => { stops.push(args); },
       onRemoved: { addListener() {} }, onUpdated: { addListener() {} } },
     scripting: { executeScript: async value => { injections.push(value); } }
@@ -46,7 +47,7 @@ function harness() {
   const send = (message, sender = popup) => new Promise(resolve => {
     if (!handler(message, sender, resolve)) resolve(undefined);
   });
-  return { send, data, requests, injections, stops, access, state };
+  return { send, data, requests, injections, stops, mutations, access, state };
 }
 
 test('pairing is session-only, restricted to trusted contexts, and targets the isolated main frame', async () => {
@@ -73,6 +74,90 @@ test('only explicit popup pairing on the exact official route is accepted', asyn
   assert.equal((await h.send({ type: 'orb:start', code: CODE }, content)).ok, false);
   assert.equal(await h.send({ type: 'orb:start', code: CODE }, { ...popup, id: 'foreign' }), undefined);
   assert.equal(h.data.bridge, undefined);
+});
+
+test('page diagnostics distinguish missing tabs, unavailable URLs and unsupported pages without exposing URLs', async () => {
+  const h = harness();
+  const privateURL = 'https://example.test/private?token=not-for-status';
+  for (const [tab, expected] of [
+    [undefined, 'no-tab'],
+    [{ url: PAGE }, 'no-tab'],
+    [{ id: 7 }, 'url-unavailable'],
+    [{ id: 7, url: '' }, 'url-unavailable'],
+    [{ id: 7, url: privateURL }, 'unsupported-page'],
+    [{ id: 7, url: PAGE }, 'usage-page']
+  ]) {
+    h.state.tab = tab;
+    const status = await h.send({ type: 'orb:status' });
+    assert.equal(status.ok, true);
+    assert.equal(status.tabState, expected);
+    assert.equal(status.onUsagePage, expected === 'usage-page');
+    assert.equal(JSON.stringify(status).includes(privateURL), false);
+    assert.equal(JSON.stringify(status).includes('not-for-status'), false);
+  }
+  assert.equal(h.mutations.length, 0);
+  assert.equal(h.stops.length, 0);
+  assert.equal(h.injections.length, 0);
+  assert.equal(h.requests.length, 0);
+});
+
+test('page validation failures preserve an existing pairing without mutations, stops, injections or requests', async () => {
+  const h = harness();
+  await h.send({ type: 'orb:start', code: CODE });
+  const original = structuredClone(h.data);
+  h.mutations.length = 0;
+  h.injections.length = 0;
+  h.stops.length = 0;
+  for (const [tab, hint] of [
+    [undefined, /未找到当前标签页/],
+    [{ id: 9 }, /无法读取当前标签页地址/],
+    [{ id: 9, url: 'https://example.test/private?token=not-for-errors' }, /不是支持的官方 Codex 用量页/],
+    [{ id: 9, url: popup.url }, /不是支持的官方 Codex 用量页/]
+  ]) {
+    h.state.tab = tab;
+    for (const message of [
+      { type: 'orb:start', code: `GPTORB2.43861.${'B'.repeat(43)}` },
+      { type: 'orb:refresh' },
+      { type: 'orb:manual', snapshot: snapshot('manual-page') }
+    ]) {
+      const result = await h.send(message);
+      assert.equal(result.ok, false);
+      assert.match(result.message, hint);
+      assert.doesNotMatch(result.message, /not-for-errors|GPTORB2|example\.test/);
+      assert.deepEqual(h.data, original);
+      assert.equal(h.mutations.length, 0);
+      assert.equal(h.stops.length, 0);
+      assert.equal(h.injections.length, 0);
+      assert.equal(h.requests.length, 0);
+    }
+  }
+});
+
+test('page diagnostics retain the exact official origin and route allowlist', async () => {
+  for (const url of [PAGE, `${PAGE}/`, `${PAGE}?view=limits`, `${PAGE}/?view=limits#weekly`]) {
+    const h = harness();
+    h.state.tab.url = url;
+    assert.equal((await h.send({ type: 'orb:status' })).tabState, 'usage-page', url);
+    assert.equal((await h.send({ type: 'orb:start', code: CODE })).ok, true, url);
+    assert.equal(h.injections.length, 1);
+  }
+  const h = harness();
+  for (const url of [
+    'http://chatgpt.com/codex/settings/usage',
+    'https://chatgpt.com.evil.test/codex/settings/usage',
+    'https://chatgpt.com:444/codex/settings/usage',
+    'https://user:password@chatgpt.com/codex/settings/usage',
+    `${PAGE}-extra`, `${PAGE}/extra`, 'https://chatgpt.com/codex/settings',
+    'https://chatgpt.com/Codex/settings/usage', 'https://chatgpt.com/c/'
+  ]) {
+    h.state.tab.url = url;
+    assert.equal((await h.send({ type: 'orb:status' })).tabState, 'unsupported-page', url);
+    assert.equal((await h.send({ type: 'orb:start', code: CODE })).ok, false, url);
+  }
+  assert.equal(h.mutations.length, 0);
+  assert.equal(h.stops.length, 0);
+  assert.equal(h.injections.length, 0);
+  assert.equal(h.requests.length, 0);
 });
 
 test('the trusted popup main frame is recognized even when the browser supplies sender.tab', async () => {

@@ -2,6 +2,8 @@
 const $ = id => document.getElementById(id);
 let busy = false;
 let reloadRequested = false;
+let renderSequence = 0;
+let statusRequests = 0;
 
 function runtimeAvailable() {
   try {
@@ -13,6 +15,15 @@ function runtimeAvailable() {
 
 function disableControls() {
   document.querySelectorAll('input, button').forEach(element => { element.disabled = true; });
+}
+
+function renderPairingControls() {
+  // Typing is local. The worker validates the current page before pairing or
+  // injecting anything; a status failure must not prevent entering a fresh code.
+  const disabled = busy || reloadRequested || !runtimeAvailable();
+  $('code').disabled = disabled;
+  $('start').disabled = disabled;
+  $('start').textContent = busy ? '正在处理…' : '连接并开始读取';
 }
 
 function reloadAvailable() {
@@ -45,8 +56,21 @@ async function send(message) {
     throw new Error('请按上方说明加载扩展，再从浏览器工具栏打开。');
   }
   let response;
-  try { response = await globalThis.chrome.runtime.sendMessage(message); }
-  catch { throw new Error(backgroundHint); }
+  let timer;
+  let timedOut = false;
+  try {
+    response = await Promise.race([
+      globalThis.chrome.runtime.sendMessage(message),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => { timedOut = true; reject(new Error('timeout')); },
+          message.type === 'orb:status' ? 5000 : 10000);
+      })
+    ]);
+  } catch {
+    throw new Error(timedOut
+      ? '扩展后台响应超时，尚未确认操作结果。请检查同步状态；若仍无响应，点击“重新加载扩展”后重试。'
+      : backgroundHint);
+  } finally { clearTimeout(timer); }
   if (!response || typeof response.ok !== 'boolean') throw new Error(backgroundHint);
   if (!response.ok) throw new Error(response.message || '操作未完成，请重试。');
   return response;
@@ -55,21 +79,35 @@ async function send(message) {
 function time(ms) { return new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
 
 async function render() {
+  const sequence = ++renderSequence;
   if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
+  renderPairingControls();
   renderReload();
+  ++statusRequests;
   try {
     const state = await send({ type: 'orb:status' });
+    if (sequence !== renderSequence || reloadRequested) return;
     if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
     $('setup-help').hidden = true;
-    document.querySelectorAll('input').forEach(element => { element.disabled = busy || !state.onUsagePage; });
+    document.querySelectorAll('input').forEach(element => {
+      if (element.id !== 'code') element.disabled = busy || !state.onUsagePage;
+    });
+    renderPairingControls();
     $('refresh').disabled = busy || !state.paired || !state.onUsagePage;
     $('stop').disabled = busy || !state.paired;
     $('manual-send').disabled = busy || !state.paired || !state.onUsagePage;
-    $('start').disabled = busy || !state.onUsagePage;
     $('light').className = '';
     if (!state.onUsagePage) {
-      $('status').textContent = '请打开官方用量页';
-      $('detail').textContent = '打开后，在该标签页重新点击扩展图标。';
+      if (state.tabState === 'url-unavailable') {
+        $('status').textContent = '尚未获得当前页授权';
+        $('detail').textContent = '可以输入配对码。请在官方用量页点击浏览器工具栏的扩展图标，再连接；单独打开扩展页面不会授予读取权限。';
+      } else if (state.tabState === 'no-tab') {
+        $('status').textContent = '未找到当前标签页';
+        $('detail').textContent = '可以输入配对码。请打开浏览器中的官方用量页，再从该窗口的工具栏打开扩展。';
+      } else {
+        $('status').textContent = '请打开官方用量页';
+        $('detail').textContent = '可以输入配对码。开始读取前，请切换到官方 Codex 用量页，并在该标签页点击工具栏中的扩展图标。';
+      }
     } else if (!state.paired) {
       $('status').textContent = state.error ? '配对已失效' : '等待本机配对';
       $('detail').textContent = state.error || '配对码仅授予发送数字的权限，不是账号登录凭据。';
@@ -94,20 +132,27 @@ async function render() {
       $('detail').textContent = `${time(state.lastReadAt)} 读取 · 保持用量页打开，约每 60 秒读取一次。`;
     }
   } catch {
+    if (sequence !== renderSequence || reloadRequested) return;
     if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
     disableControls();
+    renderPairingControls();
     renderReload();
     $('setup-help').hidden = false;
     $('light').className = 'warn';
     $('status').textContent = '扩展后台暂时无法响应';
-    $('detail').textContent = '请在扩展管理页点击“重新加载”，再回到官方用量页点击扩展图标。';
-  }
+    $('detail').textContent = '配对码仍可输入。请点击下方“重新加载扩展”，再回到官方用量页点击扩展图标。';
+  } finally { --statusRequests; }
 }
 
 async function act(work) {
   if (!runtimeAvailable()) { showEnvironmentProblem(); return; }
-  if (busy) return;
-  busy = true; $('message').textContent = ''; await render();
+  if (busy || reloadRequested) return;
+  busy = true;
+  ++renderSequence; // Ignore status responses from before this action.
+  $('message').textContent = '';
+  disableControls();
+  renderPairingControls();
+  renderReload();
   try { await work(); }
   catch (error) { $('message').textContent = String(error.message || '操作失败。'); }
   finally { busy = false; await render(); }
@@ -132,11 +177,14 @@ $('stop').addEventListener('click', () => act(async () => {
 $('reload-extension').addEventListener('click', () => {
   if (!reloadAvailable() || reloadRequested) return;
   reloadRequested = true;
+  ++renderSequence;
   $('code').value = '';
+  disableControls();
   renderReload();
   try { globalThis.chrome.runtime.reload(); }
   catch {
     reloadRequested = false;
+    renderPairingControls();
     renderReload();
     $('message').textContent = '无法重新加载，请在浏览器扩展管理页点击“重新加载”。';
   }
@@ -172,4 +220,6 @@ $('manual-form').addEventListener('submit', event => {
 });
 
 render();
-if (runtimeAvailable()) setInterval(render, 1500);
+if (runtimeAvailable()) setInterval(() => {
+  if (!busy && !reloadRequested && statusRequests === 0) render();
+}, 1500);

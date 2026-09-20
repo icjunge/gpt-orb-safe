@@ -17,6 +17,12 @@ function isUsagePage(value) {
   } catch { return false; }
 }
 
+function usageTabState(tab) {
+  if (!tab || !Number.isInteger(tab.id)) return 'no-tab';
+  if (typeof tab.url !== 'string' || !tab.url) return 'url-unavailable';
+  return isUsagePage(tab.url) ? 'usage-page' : 'unsupported-page';
+}
+
 function sameKeys(value, keys) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -68,8 +74,13 @@ async function setStatus(bridge, patch) {
 
 async function currentUsageTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !Number.isInteger(tab.id) || !isUsagePage(tab.url)) {
-    throw new Error('请先打开官方 Codex 用量页，再点击扩展图标。');
+  switch (usageTabState(tab)) {
+    case 'no-tab':
+      throw new Error('未找到当前标签页。请切回浏览器中的官方 Codex 用量页，再点击工具栏中的扩展图标。');
+    case 'url-unavailable':
+      throw new Error('无法读取当前标签页地址。请关闭此面板，在官方 Codex 用量页点击浏览器工具栏中的扩展图标，授予本次页面访问权限。');
+    case 'unsupported-page':
+      throw new Error('当前标签页不是支持的官方 Codex 用量页。请打开上方的官方用量页链接，再从该标签页点击工具栏中的扩展图标。');
   }
   return tab;
 }
@@ -138,8 +149,9 @@ async function popupMessage(message) {
     const bridge = await session();
     const status = (await chrome.storage.session.get('status')).status || {};
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabState = usageTabState(tab);
     return { ok: true, paired: Boolean(bridge), mode: bridge?.mode || null,
-      onUsagePage: isUsagePage(tab?.url), sameTab: Boolean(bridge && bridge.tabId === tab?.id),
+      tabState, onUsagePage: tabState === 'usage-page', sameTab: Boolean(bridge && bridge.tabId === tab?.id),
       lastSentAt: status.lastSentAt || null, lastReadAt: status.lastReadAt || null,
       hasData: Boolean(status.hasData), source: status.source || null, error: status.error || '' };
   }

@@ -25,11 +25,21 @@ app.whenReady().then(async()=>{
   const extension=await session.defaultSession.extensions.loadExtension(path.join(__dirname,'../extension'));
   await window.loadURL(`chrome-extension://${extension.id}/popup.html`);
   await window.webContents.executeJavaScript('render()');
-  const installed=await window.webContents.executeJavaScript(`({valid:runtimeAvailable(),helpHidden:document.querySelector('#setup-help').hidden,status:document.querySelector('#status').textContent})`);
+  const installed=await window.webContents.executeJavaScript(`(async () => {
+    const state=await send({type:'orb:status'});
+    return {valid:runtimeAvailable(),helpHidden:document.querySelector('#setup-help').hidden,
+      status:document.querySelector('#status').textContent,tabState:state.tabState,onUsagePage:state.onUsagePage,
+      codeEditable:!document.querySelector('#code').disabled,startEnabled:!document.querySelector('#start').disabled};
+  })()`);
   assert.equal(installed.valid,true);
   assert.equal(installed.helpHidden,true);
-  assert.equal(installed.status,'请打开官方用量页');
-  console.log('Popup Chromium regression: 9 checks passed for plain-file failure and real MV3 popup messaging; no account or browser credentials used.');
+  const expectedStatus={'no-tab':'未找到当前标签页','url-unavailable':'尚未获得当前页授权','unsupported-page':'请打开官方用量页'};
+  assert.ok(Object.hasOwn(expectedStatus,installed.tabState));
+  assert.equal(installed.status,expectedStatus[installed.tabState]);
+  assert.equal(installed.onUsagePage,false);
+  assert.equal(installed.codeEditable,true);
+  assert.equal(installed.startEnabled,true);
+  console.log('Popup Chromium regression passed for plain-file failure, real MV3 messaging and editable pairing outside the usage page; no account or browser credentials used.');
   window.destroy();app.quit();
 }).catch(error=>{console.error(error.message);app.exit(1);});
 app.on('quit',()=>fs.rmSync(profile,{recursive:true,force:true}));
