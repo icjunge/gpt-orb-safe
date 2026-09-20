@@ -17,6 +17,7 @@ function fixture(t,changes={}) {
  const ok=value=>({status:0,stdout:typeof value==='string'?value:JSON.stringify(value),stderr:''});
  function run(command,args,options) {
   const secret=command==='gh'&&args[0]==='secret';state.calls.push({command,args:[...args],input:secret?'[redacted]':options.input});
+  const intercepted=state.intercept?.(command,args,options);if(intercepted!==undefined)return intercepted;
   if(command==='git') {
    if(args.join(' ')==='rev-parse --show-toplevel')return ok(project);
    if(args.join(' ')==='remote get-url origin')return ok(state.origin);
@@ -128,4 +129,71 @@ test('tag instructions require a canonical bounded stable package version before
   const f=fixture(t);fs.writeFileSync(path.join(f.project,'package.json'),JSON.stringify({version}));
   assert.throws(()=>f.execute(),/发布版本/);assert.equal(f.state.calls.length,0);assert.equal(fs.existsSync(f.keyFile),false);
  }
+});
+
+test('temporary remote failure retries once and still checks the returned main commit',t=>{
+ for(const changedHead of [false,true]) {
+  const f=fixture(t);let attempts=0;
+  f.state.intercept=(command,args)=>{
+   if(command!=='git'||args[0]!=='ls-remote')return;
+   attempts++;
+   if(attempts===1)return {status:128,stdout:'',stderr:'fatal: unable to access https://example.invalid/SECRET_MARKER: Could not resolve host: github.com'};
+   if(changedHead)f.state.remoteHead='b'.repeat(40);
+  };
+  if(changedHead) {assert.throws(()=>f.execute(),/本地 main 与远端不同/);assert.equal(mutations(f.state).length,0);assert.equal(fs.existsSync(f.keyFile),false);}
+  else {f.execute();assert.equal(mutations(f.state).length,3);}
+  assert.equal(f.state.logs.filter(value=>value.includes('重试')).length,1);
+  assert(!f.state.logs.join('\n').includes('SECRET_MARKER'));
+ }
+});
+
+test('pre-write timeout reports its phase without retrying, creating keys or changing the environment',t=>{
+ const f=fixture(t);let remoteCalls=0;const before=fs.readFileSync(f.configPath,'utf8');
+ f.state.intercept=(command,args)=>{
+  if(command==='git'&&args[0]==='ls-remote'&&++remoteCalls>1)return {error:Object.assign(new Error('SECRET_MARKER'),{code:'ETIMEDOUT'}),status:null,stdout:'SECRET_MARKER',stderr:'SECRET_MARKER'};
+ };
+ assert.throws(()=>f.execute(),error=>{
+  assert.match(error.message,/写入前/);assert.match(error.message,/git ls-remote/);assert.match(error.message,/超时/);assert(!error.message.includes('SECRET_MARKER'));return true;
+ });
+ assert.equal(remoteCalls,2);assert.equal(mutations(f.state).length,0);assert.equal(fs.existsSync(f.keyFile),false);assert.equal(fs.readFileSync(f.configPath,'utf8'),before);
+});
+
+test('authentication, certificate and unknown Git failures are never retried or printed verbatim',t=>{
+ for(const stderr of ['fatal: Authentication failed for https://ghp_SECRET_MARKER@github.com/owner/repo','fatal: unable to access https://SECRET_MARKER: SSL certificate problem: certificate has expired','fatal: HTTP 403 after connection timed out: SECRET_MARKER','fatal: SSL certificate problem after failed to connect: SECRET_MARKER','fatal: SECRET_MARKER arbitrary failure']) {
+  const f=fixture(t);let attempts=0;
+  f.state.intercept=(command,args)=>{
+   if(command==='git'&&args[0]==='ls-remote'){attempts++;return {status:128,stdout:'SECRET_MARKER',stderr};}
+  };
+  assert.throws(()=>f.execute(),error=>{assert.match(error.message,/git ls-remote/);assert.match(error.message,/128/);assert(!error.message.includes('SECRET_MARKER'));return true;});
+  assert.equal(attempts,1);assert.equal(mutations(f.state).length,0);assert(!f.state.logs.join('\n').includes('SECRET_MARKER'));
+ }
+});
+
+test('final Git timeout leaves the matching local key and recovery receipt reusable',t=>{
+ const f=fixture(t);let remoteCalls=0;const before=fs.readFileSync(f.configPath,'utf8');
+ f.state.intercept=(command,args)=>{
+  if(command==='git'&&args[0]==='ls-remote'&&++remoteCalls>=3)return {error:{code:'ETIMEDOUT'},status:null,stdout:'SECRET_MARKER',stderr:'SECRET_MARKER'};
+ };
+ assert.throws(()=>f.execute(),error=>{assert.match(error.message,/最终/);assert(!error.message.includes('SECRET_MARKER'));return true;});
+ assert.equal(remoteCalls,3);assert.equal(f.state.secret,true);assert.equal(fs.existsSync(f.keyFile+'.setup.json'),true);assert.equal(fs.readFileSync(f.configPath,'utf8'),before);
+ const key=fs.readFileSync(f.keyFile,'utf8');const failedLog=f.state.logs.join('\n');assert.match(failedLog,/Secret 上传成功，但后续步骤未完成/);assert(!failedLog.includes(key));
+ f.state.intercept=null;f.execute();assert.equal(fs.readFileSync(f.keyFile,'utf8'),key);assert.equal(JSON.parse(fs.readFileSync(f.configPath)).publicKey,crypto.createPublicKey(key).export({type:'spki',format:'pem'}).toString());
+});
+
+test('a timed-out secret upload is not automatically retried and never exposes stdin',t=>{
+ const f=fixture(t);let attempts=0;const before=fs.readFileSync(f.configPath,'utf8');
+ f.state.intercept=(command,args,options)=>{
+  if(command==='gh'&&args[0]==='secret'){attempts++;return {error:{code:'ETIMEDOUT'},status:null,stdout:options.input,stderr:options.input};}
+ };
+ assert.throws(()=>f.execute(),error=>{assert.match(error.message,/超时/);assert(!error.message.includes('PRIVATE KEY'));return true;});
+ assert.equal(attempts,1);assert.equal(fs.existsSync(f.keyFile),true);assert.equal(fs.existsSync(f.keyFile+'.setup.json'),true);assert.equal(fs.readFileSync(f.configPath,'utf8'),before);assert(!f.state.logs.join('\n').includes('PRIVATE KEY'));assert.match(f.state.logs.join('\n'),/结果尚未确认/);
+});
+
+test('persistent DNS failure stops after a single retry without any signing changes',t=>{
+ const f=fixture(t);let attempts=0;
+ f.state.intercept=(command,args)=>{
+  if(command==='git'&&args[0]==='ls-remote'){attempts++;return {status:128,stdout:'',stderr:'fatal: Could not resolve host: SECRET_MARKER'};}
+ };
+ assert.throws(()=>f.execute(),error=>{assert.match(error.message,/网络连接失败/);assert(!error.message.includes('SECRET_MARKER'));return true;});
+ assert.equal(attempts,2);assert.equal(mutations(f.state).length,0);assert.equal(fs.existsSync(f.keyFile),false);
 });
