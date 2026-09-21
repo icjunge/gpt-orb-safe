@@ -26,7 +26,7 @@ function harness(page, initial, actionImpl = async () => ({ ok: true })) {
     const listeners = new Map();
     const node = {
       id, textContent: '', value: /\bvalue="([^"]*)"/.exec(attrs)?.[1] || '', disabled: /\bdisabled\b/.test(attrs),
-      className: /\bclass="([^"]*)"/.exec(attrs)?.[1] || '', dataset: {}, style: {}, children: [], checked: false, open: /\bopen\b/.test(attrs),
+      className: /\bclass="([^"]*)"/.exec(attrs)?.[1] || '', dataset: {}, style: { setProperty(name, value) { this[name] = value; } }, children: [], checked: false, open: /\bopen\b/.test(attrs),
       addEventListener(name, fn) { listeners.set(name, [...listeners.get(name) || [], fn]); },
       dispatch(type, extra = {}) { for (const fn of listeners.get(type) || []) fn({ preventDefault() {}, target: this, ...extra }); },
       append(...children) { this.children.push(...children); },
@@ -74,12 +74,19 @@ async function flush() { for (let i = 0; i < 5; i++) await new Promise(resolve =
 
 test('native mode requires explicit enable and shows installation without browser pairing', async () => {
   const h = harness('panel', fixture({ snapshot: null, codex: { enabled: false, state: 'disabled' } })); await flush();
+  assert.equal(h.node('empty-state').classList.contains('hidden'), false);
+  assert.equal(h.node('empty-title').textContent, '连接 Codex');
+  assert.equal(h.node('settings-view').classList.contains('hidden'), true);
   assert.equal(h.node('codex-controls').classList.contains('hidden'), false);
   assert.equal(h.node('codex-setup').classList.contains('hidden'), false);
   assert.equal(h.node('setup-card').classList.contains('hidden'), true);
   assert.equal(h.node('browser-settings').classList.contains('hidden'), true);
   assert.equal(h.node('refresh-codex-button').disabled, true);
+  assert.equal(h.node('quick-refresh-button').disabled, true);
   assert.equal(h.calls.length, 0);
+  h.node('configure-button').dispatch('click');
+  assert.equal(h.node('settings-view').classList.contains('hidden'), false);
+  assert.equal(h.node('overview').classList.contains('hidden'), true);
   h.node('copy-codex-setup-button').dispatch('click'); await flush();
   assert.equal(h.calls.at(-1).name, 'copyCodexSetup');
   h.node('codex-help-button').dispatch('click'); await flush();
@@ -91,25 +98,98 @@ test('native labels and service date are literal text and unknown reset credits 
   const hostile = '<img src=x onerror=alert(1)> · Spark';
   state.snapshot.windows[1].label = hostile;
   const h = harness('panel', state); await flush();
-  assert.equal(h.node('hero-tag').textContent, hostile);
   assert.ok(h.textTree().includes(hostile));
-  assert.equal(h.node('today-token-label').textContent, '最近一日 Token');
-  assert.equal(h.node('total-token-label').textContent, '服务端累计 Token');
+  assert.equal(h.node('today-token-label').textContent, '最近一日');
+  assert.equal(h.node('total-token-label').textContent, '累计');
   assert.equal(h.node('today-tokens').textContent, '0');
   assert.match(h.node('today-detail').textContent, /2026-09-19/);
   assert.match(h.node('scope-description').textContent, /并非本机今日/);
   assert.equal(h.node('reset-credits').textContent, '0');
+  assert.equal(h.node('reset-credits-row').classList.contains('hidden'), false);
   h.change({ ...state, snapshot: { ...state.snapshot, resetCredits: null, tokens: { today: null, total: null } } });
-  assert.equal(h.node('reset-credits').textContent, '—');
+  assert.equal(h.node('reset-credits-row').classList.contains('hidden'), true);
+  assert.equal(h.node('reset-credits').textContent, '');
   assert.equal(h.node('today-tokens').textContent, '—');
 });
 
-test('unavailable or invalid Token values collapse the module without showing empty metric cards', async () => {
+test('each quota is shown once with one countdown and the precise reset time on hover', async () => {
+  const h = harness('panel', fixture()); await flush();
+  const rows = h.node('limits-list').children[0].children;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].children[0].textContent, '5 小时');
+  assert.equal(rows[1].children[0].textContent, 'Spark · 官方窗口');
+  for (const [index, row] of rows.entries()) {
+    assert.deepEqual(row.children.map(child => child.className), ['window-name', 'window-value', 'window-track', 'window-reset']);
+    assert.equal(row.children[1].textContent, index === 0 ? '70%' : '54%');
+    assert.match(row.children[1]['aria-label'], /剩余额度/);
+    assert.match(row.children[3].textContent, /后重置$/);
+    assert.match(row.children[3].title, /重置时间：/);
+  }
+  assert.match(h.node('record-time').textContent, /^\d{2}:\d{2} 读取$/);
+  assert.match(h.node('record-time').title, /非服务器统计更新时间/);
+});
+
+test('missing or invalid reset credits stay hidden while zero remains visible', async () => {
+  const state = fixture(); const h = harness('panel', state); await flush();
+  for (const resetCredits of [undefined, null, -1, 1.5, NaN, Infinity, '0', Number.MAX_SAFE_INTEGER + 1]) {
+    h.change({ ...state, snapshot: { ...state.snapshot, resetCredits } });
+    assert.equal(h.node('reset-credits-row').classList.contains('hidden'), true);
+    assert.equal(h.node('reset-credits').textContent, '');
+  }
+  h.change({ ...state, snapshot: { ...state.snapshot, resetCredits: 0 } });
+  assert.equal(h.node('reset-credits-row').classList.contains('hidden'), false);
+  assert.equal(h.node('reset-credits').textContent, '0');
+  h.change({ ...state, usageSource: 'browser', settings: { usageSource: 'browser' }, snapshot: { ...state.snapshot, source: 'official-page' } });
+  assert.equal(h.node('reset-credits-row').classList.contains('hidden'), true);
+});
+
+test('empty state makes recovery available without automatically switching the active view', async () => {
+  const state = fixture({ snapshot: null, codex: { enabled: true, state: 'not-found' } });
+  const h = harness('panel', state); await flush();
+  assert.equal(h.node('empty-title').textContent, '未找到 Codex');
+  assert.equal(h.node('settings-view').classList.contains('hidden'), true);
+  h.node('configure-button').dispatch('click');
+  h.change(fixture());
+  assert.equal(h.node('empty-state').classList.contains('hidden'), true);
+  assert.equal(h.node('settings-view').classList.contains('hidden'), false);
+  assert.equal(h.node('overview').classList.contains('hidden'), true);
+  h.node('back-button').dispatch('click');
+  h.change(state);
+  assert.equal(h.node('empty-state').classList.contains('hidden'), false);
+  assert.equal(h.node('settings-view').classList.contains('hidden'), true);
+  assert.equal(h.node('overview').classList.contains('hidden'), false);
+});
+
+test('header refresh calls the native provider once and is unavailable when stopped or in browser mode', async () => {
+  let release;
+  const state = fixture();
+  const h = harness('panel', state, () => new Promise(resolve => { release = resolve; })); await flush();
+  h.node('quick-refresh-button').dispatch('click');
+  h.node('quick-refresh-button').dispatch('click');
+  h.node('refresh-codex-button').dispatch('click');
+  assert.deepEqual(h.calls.map(call => call.name), ['refreshCodex']);
+  assert.equal(h.node('quick-refresh-button').disabled, true);
+  assert.equal(h.node('quick-refresh-button')['aria-busy'], 'true');
+  assert.equal(h.node('refresh-codex-button').disabled, true);
+  release({ ok: true }); await flush();
+  assert.equal(h.node('quick-refresh-button').disabled, false);
+  h.change({ ...state, codex: { ...state.codex, enabled: false, state: 'disabled' } });
+  h.node('quick-refresh-button').dispatch('click');
+  assert.equal(h.node('quick-refresh-button').disabled, true);
+  assert.equal(h.calls.length, 1);
+  h.change({ ...state, usageSource: 'browser', settings: { usageSource: 'browser' }, snapshot: null });
+  assert.equal(h.node('quick-refresh-button').classList.contains('hidden'), true);
+  h.node('quick-refresh-button').dispatch('click');
+  assert.equal(h.calls.length, 1);
+});
+
+test('unavailable or invalid Token values hide the module without showing an empty placeholder', async () => {
   const state = fixture();
   const h = harness('panel', state); await flush();
   for (const tokens of [undefined, {}, { today: null, total: null }, { today: -1, total: '123' },
     { today: NaN, total: Infinity }, { today: 1.5, total: Number.MAX_SAFE_INTEGER + 1 }]) {
     h.change({ ...state, snapshot: { ...state.snapshot, tokens } });
+    assert.equal(h.node('token-section').classList.contains('hidden'), true);
     assert.equal(h.node('token-section').open, false);
     assert.equal(h.node('token-availability').textContent, '未提供');
     assert.equal(h.node('token-metrics').classList.contains('hidden'), true);
@@ -122,6 +202,7 @@ test('unavailable or invalid Token values collapse the module without showing em
 test('zero Token totals remain valid and partial Token data hides only the unavailable metric', async () => {
   const state = fixture();
   const h = harness('panel', { ...state, snapshot: { ...state.snapshot, tokens: { today: 0, total: 0 } } }); await flush();
+  assert.equal(h.node('token-section').classList.contains('hidden'), false);
   assert.equal(h.node('token-section').open, true);
   assert.equal(h.node('token-availability').textContent, '账号统计');
   assert.equal(h.node('today-tokens').textContent, '0');
@@ -149,10 +230,11 @@ test('Token disclosure follows availability transitions while preserving manual 
   const missing = { ...state, snapshot: { ...state.snapshot, tokens: null } };
   h.change(missing);
   assert.equal(h.node('token-section').open, false);
-  h.node('token-section').open = true;
+  assert.equal(h.node('token-section').classList.contains('hidden'), true);
   h.change(missing);
-  assert.equal(h.node('token-section').open, true, 'a user can keep the unavailable explanation open');
+  assert.equal(h.node('token-section').classList.contains('hidden'), true, 'an unavailable module stays out of the overview');
   h.change(state);
+  assert.equal(h.node('token-section').classList.contains('hidden'), false);
   assert.equal(h.node('token-section').open, true, 'newly available data expands automatically');
   h.change(missing);
   assert.equal(h.node('token-section').open, false, 'loss of data collapses an open module');
@@ -176,20 +258,81 @@ test('native appearance flags update body classes and legacy state keeps the fal
   }
 });
 
+test('material status distinguishes a compositor request from verified effect and accessible fallbacks', async () => {
+  const state = fixture(); const h = harness('panel', state); await flush();
+  assert.match(h.node('material-status').textContent, /未启用/);
+  assert.equal(h.node('glass-tint').disabled, true);
+  h.change({ ...state, appearance: { nativeBackdrop: true, backdropStatus: 'requested' } });
+  assert.match(h.node('material-status').textContent, /已请求系统毛玻璃/);
+  assert.match(h.node('material-status').textContent, /实际效果由 Windows/);
+  assert.equal(h.node('glass-tint').disabled, false);
+  for (const [backdropStatus, expected] of [['unsupported', /不支持/], ['reduced-transparency', /已关闭透明效果/], ['unavailable', /未启用/]]) {
+    h.change({ ...state, appearance: { nativeBackdrop: false, backdropStatus } });
+    assert.match(h.node('material-status').textContent, expected);
+    assert.equal(h.node('glass-tint').disabled, true);
+  }
+  h.change({ ...state, appearance: { nativeBackdrop: true, backdropStatus: 'requested', highContrast: true } });
+  assert.match(h.node('material-status').textContent, /高对比度已开启/);
+  assert.equal(h.node('glass-tint').disabled, true);
+  h.node('glass-tint').value = '30'; h.node('glass-tint').dispatch('input'); h.node('glass-tint').dispatch('change'); await flush();
+  assert.equal(h.calls.length, 0);
+});
+
+test('glass tint previews locally, saves only on change, and retains an in-progress drag across broadcasts', async () => {
+  const state = fixture({ appearance: { nativeBackdrop: true, backdropStatus: 'requested' } }); const h = harness('panel', state); await flush();
+  assert.equal(h.node('glass-tint').value, '16');
+  assert.equal(h.document.body.style['--glass-tint'], '16%');
+  h.node('glass-tint').value = '34'; h.node('glass-tint').dispatch('input');
+  assert.equal(h.node('glass-tint-value').textContent, '34%');
+  assert.equal(h.document.body.style['--glass-tint'], '34%');
+  assert.equal(h.calls.length, 0);
+  h.change({ ...state, settings: { ...state.settings, glassTint: 22 } });
+  assert.equal(h.node('glass-tint').value, '34');
+  assert.equal(h.document.body.style['--glass-tint'], '34%');
+  h.node('glass-tint').dispatch('change'); await flush();
+  assert.deepEqual(h.calls, [{ name: 'setSettings', payload: { glassTint: 34 } }]);
+  for (const glassTint of [0, 70]) {
+    h.change({ ...state, settings: { ...state.settings, glassTint } });
+    assert.equal(h.node('glass-tint').value, String(glassTint));
+    assert.equal(h.document.body.style['--glass-tint'], `${glassTint}%`);
+  }
+  for (const glassTint of [-1, 71, 1.5, '20', NaN]) {
+    h.change({ ...state, settings: { ...state.settings, glassTint } });
+    assert.equal(h.document.body.style['--glass-tint'], '16%');
+  }
+});
+
+test('an earlier tint save cannot overwrite a newer drag and failed saves restore the confirmed setting', async () => {
+  const pending = [];
+  const state = fixture({ appearance: { nativeBackdrop: true, backdropStatus: 'requested' } });
+  const h = harness('panel', state, () => new Promise(resolve => pending.push(resolve))); await flush();
+  h.node('glass-tint').value = '34'; h.node('glass-tint').dispatch('input'); h.node('glass-tint').dispatch('change');
+  h.node('glass-tint').value = '48'; h.node('glass-tint').dispatch('input');
+  h.change({ ...state, settings: { ...state.settings, glassTint: 34 } });
+  pending.shift()({ ok: true }); await flush();
+  assert.equal(h.node('glass-tint').value, '48');
+  assert.equal(h.document.body.style['--glass-tint'], '48%');
+  h.node('glass-tint').dispatch('change');
+  pending.shift()({ ok: false, error: 'Do not render raw failures' }); await flush();
+  assert.equal(h.node('glass-tint').value, '34');
+  assert.equal(h.document.body.style['--glass-tint'], '34%');
+  assert.doesNotMatch(h.text(), /Do not render raw failures/);
+});
+
 test('native freshness follows configured interval and stop preserves a historical reading', async () => {
   const state = fixture(); state.snapshot.capturedAt = Date.now() - 600000;
   const panel = harness('panel', state), orb = harness('orb', state); await flush();
-  assert.equal(panel.node('source-badge').textContent, 'Codex 记录');
+  assert.equal(panel.node('sync-status').textContent, '自动读取');
   assert.equal(orb.node('orb-unit').textContent, 'Codex 剩余');
   const stopped = { ...state, codex: { ...state.codex, enabled: false, state: 'disabled' } };
   panel.change(stopped); orb.change(stopped);
-  assert.equal(panel.node('source-badge').textContent, '上次记录');
-  assert.match(panel.node('freshness-note').textContent, /自动读取已停止/);
-  assert.equal(panel.node('remaining-number').textContent, '54');
+  assert.equal(panel.node('sync-status').textContent, '已暂停');
+  assert.match(panel.node('freshness-note').textContent, /已暂停/);
+  assert.match(panel.textTree(), /54%/);
   assert.equal(orb.node('orb-unit').textContent, '上次记录');
   const expired = { ...state, staleAfterMs: 300000 };
   panel.change(expired); orb.change(expired);
-  assert.match(panel.node('freshness-note').textContent, /超过预期刷新时间/);
+  assert.match(panel.node('freshness-note').textContent, /刷新超时/);
   assert.equal(orb.node('orb-unit').textContent, '上次记录');
 });
 
@@ -197,8 +340,8 @@ test('zero reset countdown waits for a new read and never refills the percentage
   const state = fixture(); state.snapshot.windows[1].resetAt = Date.now() - 3000;
   const panel = harness('panel', state), orb = harness('orb', state); await flush();
   panel.tick(); orb.tick();
-  assert.equal(panel.node('reset-countdown').textContent, '等待读取确认');
-  assert.equal(panel.node('remaining-number').textContent, '54');
+  assert.match(panel.textTree(), /等待读取确认/);
+  assert.match(panel.textTree(), /54%/);
   assert.equal(orb.node('reset').textContent, '等待读取确认');
   assert.equal(orb.node('orb-value').textContent, '54%');
   assert.equal(panel.calls.length + orb.calls.length, 0);

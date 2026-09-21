@@ -2,7 +2,7 @@
 const {contextBridge,ipcRenderer}=require('electron');
 const allowed=new Set(['togglePanel','hidePanel','openDashboard','openHelp','openExtensionFolder','copyPairingCode',
   'checkUpdates','installUpdate','openRecoveryFolder','openReleasePage','disconnect','setSettings','dragStart','dragMove','dragEnd','quit',
-  'enableCodex','disableCodex','refreshCodex','copyCodexSetup','openCodexHelp']);
+  'enableCodex','disableCodex','refreshCodex','copyCodexSetup','openCodexHelp','panelResize']);
 contextBridge.exposeInMainWorld('orb',Object.freeze({
   getState:()=>ipcRenderer.invoke('orb:state'),
   onState:callback=>{if(typeof callback!=='function')return()=>{};const listener=(_event,state)=>callback(state);

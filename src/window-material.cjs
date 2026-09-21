@@ -1,5 +1,7 @@
 'use strict';
 
+const FALLBACK_COLOR='#171b22';
+
 // Electron's system backdrop API requires Windows 11 22H2 (build 22621).
 // Do not send unsupported DWM requests to Windows 10 or other platforms.
 function supportsAcrylic(platform,release){
@@ -12,22 +14,39 @@ function supportsAcrylic(platform,release){
 
 function systemAppearance(theme={}){
   const highContrast=Boolean(theme.shouldUseHighContrastColors||theme.inForcedColorsMode);
-  return{nativeBackdrop:false,reducedTransparency:Boolean(theme.prefersReducedTransparency||highContrast),highContrast};
+  const reducedTransparency=Boolean(theme.prefersReducedTransparency||highContrast);
+  return{nativeBackdrop:false,reducedTransparency,highContrast,
+    backdropStatus:reducedTransparency?'reduced-transparency':'unavailable'};
 }
 
 function applyPanelMaterial(win,{platform,release,theme}={}){
   const appearance=systemAppearance(theme);
-  if(!supportsAcrylic(platform,release)||!win||win.isDestroyed())return appearance;
+  if(!supportsAcrylic(platform,release)){
+    if(!appearance.reducedTransparency)appearance.backdropStatus='unsupported';
+    return appearance;
+  }
+  if(!win||win.isDestroyed())return appearance;
   try{
     win.setBackgroundMaterial(appearance.reducedTransparency?'none':'acrylic');
+    // Electron 44 applies the DWM backdrop, extends the frameless client area and
+    // updates Chromium's native compositor. Its JS API returns void: DWM failures
+    // are logged internally, not returned to us. This flag is only a renderer
+    // paint hint to uncover the requested backdrop, never proof of visible blur.
+    // OS transparency, battery saver and hardware policy may still make it solid.
+    // https://github.com/electron/electron/blob/v44.4.3/shell/browser/native_window_views.cc
+    win.setBackgroundColor(appearance.reducedTransparency?FALLBACK_COLOR:'#00000000');
     appearance.nativeBackdrop=!appearance.reducedTransparency;
+    if(appearance.nativeBackdrop)appearance.backdropStatus='requested';
   }catch{
     // A backdrop is cosmetic: an unavailable compositor must never block startup.
+    appearance.nativeBackdrop=false;
+    if(!appearance.reducedTransparency)appearance.backdropStatus='unavailable';
     try{win.setBackgroundMaterial('none');}catch{}
+    try{win.setBackgroundColor(FALLBACK_COLOR);}catch{}
   }
   // The native host remains an ordinary rounded window, not a layered transparent
-  // window. Its web content is transparent only while DWM supplies the material.
-  try{win.setBackgroundColor(appearance.nativeBackdrop?'#00000000':'#f1f4f8');}catch{}
+  // window. Never use whole-window opacity here: it fades text and can switch the
+  // host to a layered window. Tint belongs to the renderer's single surface.
   return appearance;
 }
 

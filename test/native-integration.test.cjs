@@ -55,7 +55,7 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     setBackgroundColor(value){this.backgroundColor=value;}
     showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
     isVisible(){return this.visible;}
-    getBounds(){return this.bounds;} setBounds(bounds){this.bounds={...this.bounds,...bounds};}
+    getBounds(){return this.bounds;} setBounds(bounds){this.bounds={...this.bounds,...bounds};this.boundUpdates=(this.boundUpdates||0)+1;}
     setPosition(x,y){Object.assign(this.bounds,{x,y});}
   }
   class Tray extends EventEmitter {
@@ -130,7 +130,7 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
   const event={sender,senderFrame:sender.mainFrame};
   const state=()=>clone(handlers.get('orb:state')(event));
   const action=async(name,payload,source=event)=>clone(await handlers.get('orb:action')(source,name,payload));
-  return {app,windows,nativeTheme,provider:providers[0],bridge:bridges[0],calls,state,action,event,handlers,timers,
+  return {app,windows,nativeTheme,screen:electron.screen,provider:providers[0],bridge:bridges[0],calls,state,action,event,handlers,timers,
     saved:()=>JSON.parse(files.get(preferencesPath)),
     async quit(){app.quit();await settle();}};
 }
@@ -142,9 +142,12 @@ test('native acrylic applies only to the panel and follows accessibility changes
   assert.equal(orb.material,undefined);
   assert.equal(panel.options.transparent,false);
   assert.equal(panel.options.roundedCorners,true);
+  assert.equal(panel.options.width,380);
+  assert.equal(panel.options.height,360);
+  assert.equal(h.nativeTheme.themeSource,'dark');
   assert.equal(panel.material,'acrylic');
   assert.equal(panel.backgroundColor,'#00000000');
-  assert.deepEqual(h.state().appearance,{nativeBackdrop:true,reducedTransparency:false,highContrast:false});
+  assert.deepEqual(h.state().appearance,{nativeBackdrop:true,backdropStatus:'requested',reducedTransparency:false,highContrast:false});
   h.nativeTheme.prefersReducedTransparency=true;
   h.nativeTheme.emit('updated');
   assert.equal(panel.material,'none');
@@ -161,6 +164,61 @@ test('native acrylic applies only to the panel and follows accessibility changes
   assert.deepEqual([...h.handlers.keys()],['orb:state','orb:action']);
 });
 
+test('panel resize accepts only bounded integer heights from the exact panel main frame',async()=>{
+  const h=await launch(),[orb,panel]=h.windows;
+  panel.setBounds({x:200,y:180,width:380,height:360});
+  const before=clone(panel.getBounds());
+  for(const payload of [undefined,null,{},[],{height:'400'},{height:359},{height:661},{height:400.5},
+    {height:NaN},{height:Infinity},{height:400,width:900},{height:400,x:0},Object.assign(Object.create({height:400}),{unexpected:true})]){
+    assert.equal((await h.action('panelResize',payload)).ok,false);
+    assert.deepEqual(clone(panel.getBounds()),before);
+  }
+  const orbEvent={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  const otherFrame={sender:panel.webContents,senderFrame:{url:panel.webContents.mainFrame.url}};
+  for(const event of [orbEvent,otherFrame,{}]){
+    assert.equal((await h.action('panelResize',{height:600},event)).ok,false);
+    assert.deepEqual(clone(panel.getBounds()),before);
+  }
+  for(const height of [360,376,600,660]){
+    assert.equal((await h.action('panelResize',{height})).ok,true);
+    assert.equal(panel.getBounds().height,height);
+    assert.equal(panel.getBounds().width,380);
+    assert.equal(panel.getBounds().x,200);
+    assert.equal(panel.getBounds().y,180);
+  }
+  const changes=panel.boundUpdates;
+  await h.action('panelResize',{height:660});
+  assert.equal(panel.boundUpdates,changes,'same requested bounds must not resize again');
+});
+
+test('content resizing stays on the panel display and clamps within its work area without anchoring to the orb',async()=>{
+  const h=await launch(),[orb,panel]=h.windows;
+  orb.setBounds({x:500,y:200,width:92,height:104});
+  panel.setBounds({x:2920,y:850,width:380,height:360});
+  h.screen.getDisplayMatching=b=>({workArea:b.x>=1920?{x:1920,y:0,width:1280,height:1024}:{x:0,y:0,width:1920,height:1080}});
+  await h.action('panelResize',{height:600});
+  assert.deepEqual({x:panel.bounds.x,y:panel.bounds.y,width:panel.bounds.width,height:panel.bounds.height},{x:2820,y:424,width:380,height:600});
+  panel.setBounds({x:-1150,y:-50});
+  h.screen.getDisplayMatching=()=>({workArea:{x:-1280,y:-200,width:1280,height:720}});
+  await h.action('panelResize',{height:660});
+  assert.deepEqual({x:panel.bounds.x,y:panel.bounds.y,width:panel.bounds.width,height:panel.bounds.height},{x:-1150,y:-140,width:380,height:660});
+});
+
+test('anchoring restores the desired content height after a small display temporarily limits it',async()=>{
+  const h=await launch(),[orb,panel]=h.windows;
+  h.screen.getDisplayMatching=()=>({workArea:{x:0,y:0,width:1280,height:300}});
+  await h.action('panelResize',{height:660});
+  assert.equal(panel.bounds.height,300);
+  assert.equal(panel.bounds.y,0);
+  h.screen.getDisplayMatching=()=>({workArea:{x:0,y:0,width:1920,height:1080}});
+  orb.setBounds({x:700,y:400,width:92,height:104});
+  await h.action('togglePanel');
+  assert.equal(panel.bounds.height,660);
+  assert.equal(panel.bounds.width,380);
+  assert.equal(panel.bounds.x,310);
+  assert.equal(panel.bounds.y,340);
+});
+
 test('unsupported Windows and compositor failures retain a usable panel and native quota controller',async()=>{
   const legacy=await launch({release:'10.0.19045'});
   assert.equal(legacy.windows[1].options.transparent,true);
@@ -168,7 +226,7 @@ test('unsupported Windows and compositor failures retain a usable panel and nati
   assert.equal(legacy.state().appearance.nativeBackdrop,false);
   const failed=await launch({backdropFails:true});
   assert.equal(failed.windows[1].material,'none');
-  assert.equal(failed.windows[1].backgroundColor,'#f1f4f8');
+  assert.equal(failed.windows[1].backgroundColor,'#171b22');
   assert.equal(failed.state().appearance.nativeBackdrop,false);
   assert.equal((await failed.action('enableCodex')).ok,true);
   assert.deepEqual(failed.provider.starts,[5]);

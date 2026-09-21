@@ -12,7 +12,7 @@ test('IPC requires registered webContents, its exact main frame and canonical lo
 test('preferences accept only typed display settings and never arbitrary data',()=>{
   const result=validSettings({alwaysOnTop:'false',opacity:Infinity,token:'secret',autoStart:true});
   assert.deepEqual(result,{alwaysOnTop:true,autoStart:true,notifications:true,opacity:1,autoCheckUpdates:true,
-    usageSource:'codex-cli',codexEnabled:false,refreshMinutes:5});
+    usageSource:'codex-cli',codexEnabled:false,refreshMinutes:5,glassTint:16});
   assert.equal(validSettings({opacity:0}).opacity,.55);
   assert.equal(validSettings({opacity:5}).opacity,1);
 });
@@ -24,4 +24,10 @@ test('native preferences reject commands, credentials, arbitrary sources and inv
   assert.equal(validSettings({usageSource:'browser'}).usageSource,'browser');
   assert.equal(validSettings({refreshMinutes:1440}).refreshMinutes,1440);
   assert.equal(validSettings({codexEnabled:true}).codexEnabled,true);
+});
+
+test('glass tint persists only bounded integer percentages without changing window opacity',()=>{
+  for(const value of [0,16,70]){const settings=validSettings({glassTint:value});assert.equal(settings.glassTint,value);assert.equal(settings.opacity,1);}
+  for(const value of [-1,71,NaN,Infinity,'16',0.5])assert.equal(validSettings({glassTint:value}).glassTint,16);
+  assert.equal(validSettings({},validSettings({glassTint:30})).glassTint,30);
 });
