@@ -69,6 +69,8 @@ if(!process.versions.electron){
     Object.assign(report,{status,reason});
     if(error)report.error=String(error.stack||error);
     writeReport(report);
+    // Synthetic fixture metadata stays inspectable when artifact transfers are unavailable.
+    console.log(`Native backdrop report: ${JSON.stringify(report)}`);
     console.log(`Native backdrop diagnostic: ${status}. ${reason}`);
     app.exit(error?1:0);
   }
