@@ -11,7 +11,8 @@ const {UpdateManager} = require('./updater.cjs');
 const {validSettings,allowedSender} = require('./security.cjs');
 const {CodexProvider} = require('./codex-provider.cjs');
 const {discoverCodex} = require('./codex-discovery.cjs');
-const {supportsAcrylic,systemAppearance,applyPanelMaterial} = require('./window-material.cjs');
+const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial} = require('./window-material.cjs');
+const {COMPACT_SIZE,createOrbController} = require('./orb-window.cjs');
 app.setName('GPT Usage Orb Safe');
 app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 // App-local material scheme; does not change the Windows system theme.
@@ -19,6 +20,7 @@ nativeTheme.themeSource='dark';
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
 let codexProvider=null;
+let orbController=null,nativeOrbHost=false;
 let panelHeight=240;
 let appearance=systemAppearance(nativeTheme);
 const unavailableUpdates=()=>({status:'unconfigured',currentVersion:app.getVersion(),availableVersion:null,progress:null,
@@ -47,7 +49,7 @@ function state(){const status=bridge?.getStatus()||{listening:false,connected:fa
     bridge:status,snapshot,settings,appearance,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
     updates:updateManager?.snapshot()||unavailableUpdates(),
     extension:extensionInfo?{version:extensionInfo.version,changed:extensionInfo.changed,needsReload:extensionInfo.changed,error:extensionInfo.error||null}:null};}
-function clampPosition(position,width=92,height=104){
+function clampPosition(position,width=COMPACT_SIZE,height=COMPACT_SIZE){
   const display=position?screen.getDisplayNearestPoint({x:Math.round(position.x),y:Math.round(position.y)}):screen.getPrimaryDisplay();
   const a=display.workArea;return{x:Math.round(Math.max(a.x,Math.min(position?.x??a.x+a.width-width-24,a.x+a.width-width))),
     y:Math.round(Math.max(a.y,Math.min(position?.y??a.y+a.height/2-height/2,a.y+a.height-height)))};
@@ -88,12 +90,18 @@ function createWindows(){
     minimizable:false,fullscreenable:false,show:false,skipTaskbar:true,icon:path.join(__dirname,'../assets/orb.png'),
     webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,
       webSecurity:true,webviewTag:false,backgroundThrottling:true,spellcheck:false}};
-  orbWindow=new BrowserWindow({...common,width:92,height:104,...clampPosition(savedPosition),hasShadow:false});
+  nativeOrbHost=supportsAcrylic(process.platform,os.release());
+  orbWindow=new BrowserWindow({...common,width:COMPACT_SIZE,height:COMPACT_SIZE,...clampPosition(savedPosition),
+    transparent:!nativeOrbHost,thickFrame:false,roundedCorners:false,hasShadow:false});
+  orbController=createOrbController(orbWindow,screen,{platform:process.platform});
+  // Crossing displays can change HWND DPI even though the DIP size is unchanged.
+  orbWindow.on('move',()=>orbController.refreshShape());
   const nativePanel=supportsAcrylic(process.platform,os.release());
   panelWindow=new BrowserWindow({...common,width:340,height:panelHeight,hasShadow:true,roundedCorners:true,
     transparent:!nativePanel});
   const updateAppearance=()=>{
-    appearance=applyPanelMaterial(panelWindow,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    const options={platform:process.platform,release:os.release(),theme:nativeTheme};
+    appearance={...applyPanelMaterial(panelWindow,options),...applyOrbMaterial(orbWindow,options)};
     publish();
   };
   updateAppearance();
@@ -103,7 +111,9 @@ function createWindows(){
     const file=path.join(__dirname,'ui',name+'.html');harden(win,file);win.setAlwaysOnTop(settings.alwaysOnTop,'floating');
     win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});win.loadFile(file);
   }
-  orbWindow.setOpacity(settings.opacity);
+  // Even setOpacity(1) makes Electron's Windows host layered, which defeats the
+  // native backdrop path. Ordinary hosts use a renderer tint and opaque text.
+  if(!nativeOrbHost)orbWindow.setOpacity(settings.opacity);
   orbWindow.once('ready-to-show',()=>orbWindow.showInactive());
   panelWindow.once('ready-to-show',()=>{if(!process.argv.includes('--startup'))showPanel();});
   orbWindow.webContents.on('context-menu',()=>trayMenu().popup({window:orbWindow}));
@@ -140,7 +150,8 @@ function applySettings(input){
     else codexProvider.stop();
   }
   orbWindow.setAlwaysOnTop(settings.alwaysOnTop,'floating');panelWindow.setAlwaysOnTop(settings.alwaysOnTop,'floating');
-  orbWindow.setOpacity(settings.opacity);saveSettings();tray?.setContextMenu(trayMenu());publish();return{ok:true};
+  if(!nativeOrbHost)orbWindow.setOpacity(settings.opacity);
+  saveSettings();tray?.setContextMenu(trayMenu());publish();return{ok:true};
 }
 function disconnect(){codexProvider?.stop();settings.codexEnabled=false;saveSettings();snapshot=null;notified.clear();bridge?.rotateKey();tray?.setContextMenu(trayMenu());publish();}
 function notifyLow(){
@@ -169,6 +180,7 @@ function registerIpc(){
       case'togglePanel':togglePanel();break;
       case'hidePanel':panelWindow.hide();break;
       case'panelResize':if(event.sender!==panelWindow?.webContents)return{ok:false};return resizePanel(payload);
+      case'orbExpand':if(event.sender!==orbWindow?.webContents)return{ok:false};return orbController.request(payload);
       case'copyPairingCode':if(!bridge?.getStatus().listening)return{ok:false,error:'本机同步尚未启动'};clipboard.writeText(bridge.getPairingCode());break;
       case'disconnect':disconnect();break;
       case'enableCodex':
@@ -196,11 +208,11 @@ function registerIpc(){
         if(typeof repository!=='string'||!/^[-A-Za-z0-9_]+\/[-A-Za-z0-9_.]+$/.test(repository))return{ok:false,error:'发布仓库尚未配置。'};
         await shell.openExternal('https://github.com/'+repository+'/releases');break;}
       case'setSettings':return applySettings(payload);
-      case'dragStart':if(event.sender!==orbWindow.webContents)return{ok:false};drag={cursor:screen.getCursorScreenPoint(),bounds:orbWindow.getBounds()};break;
+      case'dragStart':if(event.sender!==orbWindow.webContents)return{ok:false};orbController.beginDrag();drag={cursor:screen.getCursorScreenPoint(),bounds:orbWindow.getBounds()};break;
       case'dragMove':if(event.sender!==orbWindow.webContents||!drag)return{ok:false};{
-        const p=screen.getCursorScreenPoint(),point=clampPosition({x:drag.bounds.x+p.x-drag.cursor.x,y:drag.bounds.y+p.y-drag.cursor.y});
+        const p=screen.getCursorScreenPoint(),point=clampPosition({x:drag.bounds.x+p.x-drag.cursor.x,y:drag.bounds.y+p.y-drag.cursor.y},drag.bounds.width,drag.bounds.height);
         orbWindow.setPosition(point.x,point.y);anchorPanel();break;}
-      case'dragEnd':if(event.sender!==orbWindow.webContents)return{ok:false};drag=null;savedPosition={x:orbWindow.getBounds().x,y:orbWindow.getBounds().y};clearTimeout(saveTimer);saveTimer=setTimeout(saveSettings,250);break;
+      case'dragEnd':if(event.sender!==orbWindow.webContents)return{ok:false};drag=null;orbController.endDrag();savedPosition=orbController.compactPosition();clearTimeout(saveTimer);saveTimer=setTimeout(saveSettings,250);break;
       case'quit':app.quit();break;
       default:return{ok:false,error:'未知操作'};
     }return{ok:true};}catch{return{ok:false,error:'操作未完成，请稍后重试。'};}
@@ -236,7 +248,7 @@ else{
     try{await bridge.start();}catch{error='本机同步端口 43861 无法启动。请关闭其他新版悬浮球后重新打开。';}publish();
     if(settings.usageSource==='codex-cli'&&settings.codexEnabled)void codexProvider.start(settings.refreshMinutes);
     globalShortcut.register('CommandOrControl+Alt+G',togglePanel);
-    for(const event of['display-metrics-changed','display-removed'])screen.on(event,()=>{const p=clampPosition(orbWindow.getBounds());orbWindow.setPosition(p.x,p.y);anchorPanel();});
+    for(const event of['display-metrics-changed','display-removed'])screen.on(event,()=>{orbController.syncDisplay();anchorPanel();});
     tick=setInterval(publish,30000);
   }).catch(()=>{dialog.showErrorBox('GPT 悬浮球启动失败','请重新打开程序；若仍无法启动，请使用完整安装包修复。官方账号凭据不由悬浮球保存。');app.quit();});
   app.on('window-all-closed',()=>{});

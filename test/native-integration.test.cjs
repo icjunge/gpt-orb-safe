@@ -15,7 +15,7 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false} = {}) {
+async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
   const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[]};
   const userData = '/virtual-orb/user-data';
@@ -50,13 +50,14 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     }
     loadFile(file){this.webContents.mainFrame.url=pathToFileURL(file).href;}
     isDestroyed(){return false;}
-    setAlwaysOnTop(){} setOpacity(){} focus(){}
-    setBackgroundMaterial(value){if(backdropFails&&value==='acrylic')throw new Error('unavailable compositor');this.material=value;}
+    setAlwaysOnTop(){} setOpacity(value){(this.opacities||=[]).push(value);} focus(){this.focusCalls=(this.focusCalls||0)+1;}
+    setBackgroundMaterial(value){if((backdropFails||(orbBackdropFails&&windows[0]===this))&&value==='acrylic')throw new Error('unavailable compositor');this.material=value;}
     setBackgroundColor(value){this.backgroundColor=value;}
+    setShape(value){(this.shapes||=[]).push(clone(value));}
     showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
     isVisible(){return this.visible;}
-    getBounds(){return this.bounds;} setBounds(bounds){this.bounds={...this.bounds,...bounds};this.boundUpdates=(this.boundUpdates||0)+1;}
-    setPosition(x,y){Object.assign(this.bounds,{x,y});}
+    getBounds(){return{...this.bounds};} setBounds(bounds){this.bounds={...this.bounds,...bounds};this.boundUpdates=(this.boundUpdates||0)+1;}
+    setPosition(x,y){Object.assign(this.bounds,{x,y});this.emit('move');}
   }
   class Tray extends EventEmitter {
     setToolTip(value){this.tooltip=value;} setContextMenu(value){this.menu=value;}
@@ -115,6 +116,7 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     './updater.cjs':{UpdateManager:class {constructor(){throw new Error('not packaged');}}},
     './codex-provider.cjs':{CodexProvider:Provider},
     './window-material.cjs':require('../src/window-material.cjs'),
+    './orb-window.cjs':require('../src/orb-window.cjs'),
     './codex-discovery.cjs':{discoverCodex:()=>{calls.discover += 1;throw new Error('discovery must not execute in controller tests');}}
   };
   vm.runInNewContext(mainSource, {
@@ -135,11 +137,19 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     async quit(){app.quit();await settle();}};
 }
 
-test('native acrylic applies only to the panel and follows accessibility changes without widening IPC',async()=>{
+test('native orb and panel request separate acrylic hosts and follow accessibility without fading text or activating the orb',async()=>{
   const h=await launch();
   const [orb,panel]=h.windows;
-  assert.equal(orb.options.transparent,true);
-  assert.equal(orb.material,undefined);
+  assert.equal(orb.options.transparent,false);
+  assert.equal(orb.options.thickFrame,false);
+  assert.equal(orb.options.roundedCorners,false);
+  assert.equal(orb.options.width,64);
+  assert.equal(orb.options.height,64);
+  assert.equal(orb.material,'acrylic');
+  assert.equal(orb.backgroundColor,'#00000000');
+  assert.equal(orb.shapes.length,1);
+  assert.equal(orb.opacities,undefined);
+  assert.equal(orb.focusCalls,undefined);
   assert.equal(panel.options.transparent,false);
   assert.equal(panel.options.roundedCorners,true);
   assert.equal(panel.options.width,340);
@@ -147,12 +157,15 @@ test('native acrylic applies only to the panel and follows accessibility changes
   assert.equal(h.nativeTheme.themeSource,'dark');
   assert.equal(panel.material,'acrylic');
   assert.equal(panel.backgroundColor,'#00000000');
-  assert.deepEqual(h.state().appearance,{nativeBackdrop:true,backdropStatus:'requested',reducedTransparency:false,highContrast:false});
+  assert.deepEqual(h.state().appearance,{nativeBackdrop:true,backdropStatus:'requested',reducedTransparency:false,highContrast:false,
+    orbNativeHost:true,orbNativeBackdrop:true,orbBackdropStatus:'requested'});
   h.nativeTheme.prefersReducedTransparency=true;
   h.nativeTheme.emit('updated');
   assert.equal(panel.material,'none');
+  assert.equal(orb.material,'none');
   assert.equal(h.state().appearance.reducedTransparency,true);
   assert.equal(h.state().appearance.nativeBackdrop,false);
+  assert.equal(h.state().appearance.orbNativeBackdrop,false);
   h.nativeTheme.prefersReducedTransparency=false;
   h.nativeTheme.shouldUseHighContrastColors=true;
   h.nativeTheme.emit('updated');
@@ -161,7 +174,62 @@ test('native acrylic applies only to the panel and follows accessibility changes
   h.nativeTheme.shouldUseHighContrastColors=false;
   h.nativeTheme.emit('updated');
   assert.equal(panel.material,'acrylic');
+  assert.equal(orb.material,'acrylic');
+  await h.action('setSettings',{opacity:.6});
+  assert.equal(orb.opacities,undefined,'even setting native host opacity to 1 would make the window layered');
   assert.deepEqual([...h.handlers.keys()],['orb:state','orb:action']);
+});
+
+test('orb hover accepts only a boolean from its exact main frame and cannot move or resize the panel',async()=>{
+  const h=await launch(),[orb,panel]=h.windows;
+  const event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  const initial=clone(orb.bounds),panelBounds=clone(panel.bounds);
+  for(const payload of [undefined,null,[],{},true,{expanded:1},{expanded:'true'},{expanded:true,width:500},{expanded:true,x:0}]){
+    assert.equal((await h.action('orbExpand',payload,event)).ok,false);
+    assert.deepEqual(clone(orb.bounds),initial);
+  }
+  for(const invalid of [h.event,{sender:orb.webContents,senderFrame:{url:orb.webContents.mainFrame.url}},{}]){
+    assert.equal((await h.action('orbExpand',{expanded:true},invalid)).ok,false);
+    assert.deepEqual(clone(orb.bounds),initial);
+  }
+  assert.deepEqual(await h.action('orbExpand',{expanded:true},event),{ok:true,expanded:true});
+  assert.equal(orb.bounds.width,104);assert.equal(orb.bounds.height,104);
+  assert.equal(orb.bounds.x+52,initial.x+32);assert.equal(orb.bounds.y+52,initial.y+32);
+  assert.deepEqual(clone(panel.bounds),panelBounds);
+  assert.equal(orb.focusCalls,undefined);assert.equal(panel.focusCalls,undefined);
+  await h.action('orbExpand',{expanded:false},event);
+  assert.equal(orb.bounds.x,initial.x);assert.equal(orb.bounds.y,initial.y);
+  assert.equal(orb.bounds.width,64);assert.equal(orb.bounds.height,64);
+});
+
+test('drag keeps the expanded orb inside a display, then restores pending compact size and saves its compact position',async()=>{
+  const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  await h.action('orbExpand',{expanded:true},event);
+  h.screen.getCursorScreenPoint=()=>({x:500,y:500});
+  await h.action('dragStart',undefined,event);
+  assert.deepEqual(await h.action('orbExpand',{expanded:false},event),{ok:true,expanded:true,queued:true});
+  assert.equal(orb.bounds.width,104);
+  h.screen.getCursorScreenPoint=()=>({x:4000,y:4000});
+  await h.action('dragMove',{x:-9999,y:-9999},event);
+  assert.equal(orb.bounds.x,1816);assert.equal(orb.bounds.y,976);
+  await h.action('dragEnd',undefined,event);
+  assert.equal(orb.bounds.width,64);assert.equal(orb.bounds.x,1836);assert.equal(orb.bounds.y,996);
+  for(const timer of h.timers.values())if(timer.delay===250)timer.callback();
+  assert.deepEqual(h.saved().position,{x:1836,y:996});
+  const shapes=orb.shapes.length;
+  h.screen.emit('display-metrics-changed');
+  assert.equal(orb.shapes.length,shapes+1,'rebuild the native region even if DIP dimensions do not change');
+});
+
+test('orb material failure does not overwrite a working panel paint hint or invoke whole-window opacity',async()=>{
+  const h=await launch({orbBackdropFails:true});
+  assert.equal(h.state().appearance.nativeBackdrop,true);
+  assert.equal(h.state().appearance.orbNativeBackdrop,false);
+  assert.equal(h.state().appearance.orbNativeHost,true);
+  assert.equal(h.state().appearance.orbBackdropStatus,'unavailable');
+  assert.equal(h.windows[0].backgroundColor,'#171b22');
+  await h.action('setSettings',{opacity:.55});
+  assert.equal(h.windows[0].opacities,undefined);
 });
 
 test('panel resize accepts only bounded integer heights from the exact panel main frame',async()=>{
@@ -223,6 +291,12 @@ test('unsupported Windows and compositor failures retain a usable panel and nati
   const legacy=await launch({release:'10.0.19045'});
   assert.equal(legacy.windows[1].options.transparent,true);
   assert.equal(legacy.windows[1].material,undefined);
+  assert.equal(legacy.windows[0].options.transparent,true);
+  assert.equal(legacy.windows[0].material,undefined);
+  assert.deepEqual(legacy.windows[0].opacities,[1]);
+  assert.equal(legacy.state().appearance.orbNativeHost,false);
+  await legacy.action('setSettings',{opacity:.75});
+  assert.deepEqual(legacy.windows[0].opacities,[1,.75]);
   assert.equal(legacy.state().appearance.nativeBackdrop,false);
   const failed=await launch({backdropFails:true});
   assert.equal(failed.windows[1].material,'none');

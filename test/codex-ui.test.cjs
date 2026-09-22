@@ -21,7 +21,8 @@ function fixture(overrides = {}) {
 function harness(page, initial, actionImpl = async () => ({ ok: true })) {
   const html = fs.readFileSync(path.join(__dirname, '../src/ui', `${page}.html`), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, '../src/ui', `${page}.js`), 'utf8');
-  const nodes = new Map(), created = [], calls = [], intervals = [];
+  const nodes = new Map(), created = [], calls = [], intervals = [], timeouts = new Map();
+  let timerSequence = 0, clock = 0;
   function element(id = '', attrs = '') {
     const listeners = new Map();
     const node = {
@@ -32,7 +33,13 @@ function harness(page, initial, actionImpl = async () => ({ ok: true })) {
       append(...children) { this.children.push(...children); },
       replaceChildren(...children) { this.children = children; },
       setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; },
-      setPointerCapture() {}
+      matching: new Set(), capturedPointer: null,
+      matches(selector) { return this.matching.has(selector); },
+      setPointerCapture(pointerId) { this.capturedPointer = pointerId; },
+      hasPointerCapture(pointerId) { return this.capturedPointer === pointerId; },
+      releasePointerCapture(pointerId) {
+        if (this.hasPointerCapture(pointerId)) { this.capturedPointer = null; this.dispatch('lostpointercapture', { pointerId }); }
+      }
     };
     node.classList = {
       contains(name) { return node.className.split(/\s+/).includes(name); },
@@ -62,10 +69,22 @@ function harness(page, initial, actionImpl = async () => ({ ok: true })) {
     onState(fn) { onState = fn; }, getState: async () => structuredClone(initial),
     async action(name, payload) { calls.push({ name, payload: payload === undefined ? undefined : structuredClone(payload) }); return actionImpl(name, payload); }
   } };
-  vm.runInNewContext(source, { window, document, Date, Number, setInterval(fn) { intervals.push(fn); }, setTimeout() { return 1; }, clearTimeout() {} }, { filename: `${page}.js` });
+  vm.runInNewContext(source, { window, document, Date, Number, setInterval(fn) { intervals.push(fn); },
+    setTimeout(fn, delay) { const id = ++timerSequence; timeouts.set(id, { fn, at: clock + delay }); return id; },
+    clearTimeout(id) { timeouts.delete(id); }
+  }, { filename: `${page}.js` });
   return { node: id => document.getElementById(id), document, calls,
     change(state) { onState(structuredClone(state)); },
     tick() { for (const fn of intervals) fn(); },
+    advance(milliseconds) {
+      const until = clock + milliseconds;
+      for (;;) {
+        const next = [...timeouts].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [id, timer] = next; clock = timer.at; timeouts.delete(id); timer.fn();
+      }
+      clock = until;
+    },
     textTree(node = nodes.get('limits-list')) { return [node.textContent, ...node.children.map(child => this.textTree(child))].join(' '); },
     text() { return [...nodes.values(), ...created].map(n => n.textContent).join('\n'); }
   };
@@ -380,6 +399,109 @@ test('zero reset countdown waits for a new read and never refills the percentage
   assert.equal(orb.node('reset').textContent, '等待读取确认');
   assert.equal(orb.node('orb-value').textContent, '54%');
   assert.equal(panel.calls.length + orb.calls.length, 0);
+});
+
+test('orb hover expands once and delayed collapse is cancelled by re-entry or keyboard focus', async () => {
+  const h = harness('orb', fixture()); await flush();
+  const orb = h.node('orb');
+  orb.dispatch('pointerenter'); orb.dispatch('pointerenter');
+  assert.deepEqual(h.calls, [{ name: 'orbExpand', payload: { expanded: true } }]);
+  orb.dispatch('pointerleave'); h.advance(159);
+  assert.equal(h.calls.length, 1);
+  orb.dispatch('pointerenter'); h.advance(1000);
+  assert.equal(h.calls.length, 1);
+  orb.matching.add(':focus-visible'); orb.dispatch('focus');
+  orb.dispatch('pointerleave'); h.advance(1000);
+  assert.equal(h.calls.length, 1);
+  orb.dispatch('blur'); h.advance(159);
+  assert.equal(h.calls.length, 1);
+  h.advance(1);
+  assert.deepEqual(h.calls.at(-1), { name: 'orbExpand', payload: { expanded: false } });
+  orb.matching.delete(':focus-visible'); orb.dispatch('focus'); h.advance(200);
+  assert.equal(h.calls.length, 2, 'mouse focus must not keep the orb enlarged');
+});
+
+test('dragging freezes orb size and a move never opens the details panel', async () => {
+  const h = harness('orb', fixture()); await flush();
+  const orb = h.node('orb'), pointer = { pointerId: 7, button: 0, screenX: 100, screenY: 100 };
+  orb.dispatch('pointerenter');
+  orb.dispatch('pointerdown', pointer);
+  orb.dispatch('pointerleave'); h.advance(1000);
+  assert.deepEqual(h.calls.map(call => call.name), ['orbExpand', 'dragStart']);
+  orb.dispatch('pointermove', { ...pointer, pointerId: 8, screenX: 200 });
+  orb.dispatch('pointerup', { ...pointer, pointerId: 8 });
+  assert.equal(h.calls.length, 2, 'unrelated pointers cannot finish the drag');
+  orb.dispatch('pointermove', { ...pointer, screenX: 103 });
+  assert.equal(h.calls.length, 2, 'small pointer jitter is still a click');
+  orb.dispatch('pointermove', { ...pointer, screenX: 111 });
+  orb.dispatch('pointerup', { ...pointer, screenX: 111 });
+  assert.deepEqual(h.calls.map(call => call.name), ['orbExpand', 'dragStart', 'dragMove', 'dragEnd']);
+  assert.equal(orb.capturedPointer, null);
+  assert.equal(h.calls.find(call => call.name === 'dragMove').payload, undefined, 'only main reads real cursor coordinates');
+  h.advance(160);
+  assert.deepEqual(h.calls.at(-1), { name: 'orbExpand', payload: { expanded: false } });
+});
+
+test('cancelled or lost pointer capture cannot turn into a click and each drag ends once', async () => {
+  for (const eventName of ['pointercancel', 'lostpointercapture']) {
+    const h = harness('orb', fixture()); await flush();
+    const orb = h.node('orb'), pointer = { pointerId: 1, button: 0, screenX: 5, screenY: 5 };
+    orb.dispatch('pointerdown', pointer);
+    orb.dispatch(eventName, pointer);
+    orb.dispatch('pointerup', pointer);
+    orb.dispatch(eventName, pointer);
+    assert.deepEqual(h.calls.map(call => call.name), ['dragStart', 'dragEnd'], eventName);
+    orb.dispatch('pointerdown', pointer);
+    orb.dispatch('pointerup', { ...pointer, screenX: 12 });
+    assert.equal(h.calls.some(call => call.name === 'togglePanel'), false, 'a moved release cannot click even without pointermove');
+    orb.dispatch('pointerdown', pointer);
+    orb.dispatch('pointerup', pointer);
+    assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 1, 'a subsequent normal click still works');
+  }
+});
+
+test('orb keyboard activation expands without repeated keydown toggles', async () => {
+  const h = harness('orb', fixture()); await flush();
+  const orb = h.node('orb');
+  orb.dispatch('keydown', { key: 'Enter', repeat: false });
+  orb.dispatch('keydown', { key: 'Enter', repeat: true });
+  orb.dispatch('pointerleave'); h.advance(500);
+  assert.deepEqual(h.calls.map(call => call.name), ['orbExpand', 'togglePanel']);
+  orb.dispatch('blur'); h.advance(160);
+  assert.deepEqual(h.calls.at(-1), { name: 'orbExpand', payload: { expanded: false } });
+});
+
+test('orb fits the rounded 100 percent reading without shrinking ordinary values', async () => {
+  const state = fixture(), h = harness('orb', state); await flush();
+  for (const [usedPercent, expected, wide] of [[0, '100%', 'true'], [0.4, '100%', 'true'], [1, '99%', 'false'], [100, '0%', 'false']]) {
+    h.change({ ...state, snapshot: { ...state.snapshot, windows: [{ usedPercent, kind: 'cli', label: 'Codex' }] } });
+    assert.equal(h.node('orb-value').textContent, expected);
+    assert.equal(h.node('orb').dataset.wideValue, wide);
+  }
+  h.change({ ...state, snapshot: null });
+  assert.equal(h.node('orb-value').textContent, '—');
+  assert.equal(h.node('orb').dataset.wideValue, 'false');
+});
+
+test('orb material tint uses its own native hint and unknown or stale quota stays accessible', async () => {
+  const state = fixture({ appearance: { nativeBackdrop: true, orbNativeBackdrop: false } });
+  const h = harness('orb', state); await flush();
+  assert.equal(h.document.body.classList.contains('native-backdrop'), false, 'panel acrylic is not orb acrylic');
+  h.change({ ...state, appearance: { orbNativeBackdrop: true }, settings: { ...state.settings, glassTint: 0 } });
+  assert.equal(h.document.body.classList.contains('native-backdrop'), true);
+  assert.equal(h.document.body.style['--glass-tint'], '0%');
+  for (const glassTint of [-1, 71, 1.2, '20', NaN]) {
+    h.change({ ...state, settings: { ...state.settings, glassTint } });
+    assert.equal(h.document.body.style['--glass-tint'], '16%');
+  }
+  h.change({ ...state, error: 'failed', appearance: { highContrast: true, reducedTransparency: true } });
+  assert.equal(h.node('orb-value').textContent, '54%');
+  assert.match(h.node('orb')['aria-label'], /Spark.*剩余 54%.*上次记录/);
+  assert.equal(h.document.body.classList.contains('high-contrast'), true);
+  assert.equal(h.document.body.classList.contains('reduced-transparency'), true);
+  h.change({ ...state, snapshot: null });
+  assert.equal(h.node('orb-value').textContent, '—');
+  assert.match(h.node('orb')['aria-label'], /额度未知/);
 });
 
 test('interval editing survives state broadcasts and invalid intervals cannot call the main process', async () => {

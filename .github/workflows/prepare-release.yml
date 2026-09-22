@@ -1,0 +1,45 @@
+name: Prepare signed update
+on:
+  push:
+    branches: [main]
+    paths: ['package.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: prepare-stable-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'icjunge/gpt-orb-safe' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/validate-release.cjs
+      - run: npm test
+  prepare:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Create the exact version tag and start its protected release
+        run: node scripts/prepare-release.cjs
+        env:
+          GH_TOKEN: ${{ github.token }}

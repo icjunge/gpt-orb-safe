@@ -194,7 +194,7 @@
   function renderUpdates() {
     const updates = state.updates || {};
     const status = updates.status || 'unconfigured';
-    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.4.1';
+    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.5.0';
     const availableVersion = typeof updates.availableVersion === 'string' ? updates.availableVersion : '';
     const messages = {
       unconfigured: '更新源尚未启用',
@@ -253,6 +253,8 @@
       previewGlassTint(tint);
     }
     const appearance = state.appearance || {};
+    hidden('orb-opacity-row', appearance.orbNativeHost === true);
+    $('opacity').disabled = appearance.orbNativeHost === true;
     const backdropStatus = appearance.backdropStatus || (appearance.nativeBackdrop === true ? 'requested' : 'unavailable');
     $('glass-tint').disabled = backdropStatus !== 'requested' || appearance.nativeBackdrop !== true || appearance.reducedTransparency === true || appearance.highContrast === true;
     const messages = {

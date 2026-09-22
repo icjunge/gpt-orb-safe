@@ -239,7 +239,7 @@ function setupRelease({project=path.resolve(__dirname,'..'),argv=process.argv.sl
     log('git tag v'+version);
     log('git push origin v'+version);
     log('在 Actions 审批 release： https://github.com/'+repository+'/actions/workflows/release.yml');
-    log('检查并发布草稿： https://github.com/'+repository+'/releases');
+    log('审批后签名并核验资产，通过后自动正式发布： https://github.com/'+repository+'/releases');
     log('本脚本没有执行这些 Git 命令，也没有发布安装包。');
     return {dryRun:false,repository,fingerprint,keyFile:file};
   } catch(error) {

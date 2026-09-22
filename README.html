@@ -4,20 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>GPT 悬浮球 2.4.1 · 使用说明</title>
+<title>GPT 悬浮球 2.5.0 · 使用说明</title>
 <style>
 :root{color-scheme:dark;font:16px/1.8 system-ui,"Microsoft YaHei",sans-serif;color:#dbe5e7;background:#0a1014}*{box-sizing:border-box}body{margin:0}main{max-width:880px;margin:0 auto;padding:64px 28px 88px}header{padding-bottom:36px;border-bottom:1px solid #253039}.eyebrow{font-size:12px;letter-spacing:2px;color:#8ddbc6}h1{font-size:38px;line-height:1.3;letter-spacing:-1px;margin:14px 0}h2{font-size:21px;margin:36px 0 12px;color:#f0f6f6}p,ol,ul{margin:12px 0}.lead{font-size:18px;color:#aebfc6;max-width:720px}.callout{border:1px solid #345e54;background:#112921;padding:18px 22px;border-radius:14px;margin:26px 0}li{padding-left:4px;margin:9px 0}code{font-size:.9em;background:#1a252e;border:1px solid #2e3943;border-radius:5px;padding:2px 6px;overflow-wrap:anywhere}a{color:#85dbc7;text-decoration:underline;text-underline-offset:3px}table{width:100%;border-collapse:collapse;font-size:14px;margin:20px 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #27333b;padding:12px}th{color:#9cacb5;font-weight:500}td:first-child{width:150px;color:#dff7ef}small,.muted{color:#9babb3}footer{border-top:1px solid #253039;margin-top:36px;padding-top:22px;color:#899ba5;font-size:13px}strong{color:#f4faf8}@media(max-width:580px){main{padding:30px 20px}h1{font-size:30px}td:first-child{width:95px}}
 </style>
 </head>
 <body><main>
-<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.4.1</div><h1>关掉网页，<br>额度照常更新。</h1><p class="lead">Windows 10 / 11 · 64 位<br>通过本机官方 Codex CLI 定时查询，浏览器扩展保留为备用来源。刷新无需临时打开网页。</p></header>
-<div class="callout"><strong>本次需要更新桌面程序。</strong><br>仅更新扩展不能启用本机 Codex。登录由官方 CLI 管理，悬浮球不读取或复制账号凭据文件；不发起模型任务，也不自动重置额度。</div>
-<h2>2.4.1 界面更新</h2>
-<p>主要额度并排显示，额外额度紧凑排列；移除分块卡片边框，使用一张连续玻璃面板。顶部保留设置与收起，底部可刷新。340 像素宽，按内容调整高度；Token 和重置次数未提供时隐藏，0 正常显示。</p>
-<p>Windows 11 22H2 及以上请求系统 Acrylic；低染色玻璃可在设置从清透调至深色，默认 16%，范围 0–70%。文字不随底色变淡。较旧系统和减少透明度模式使用实色背景；系统也可能因省电或关闭透明效果回退。圆形悬浮球不使用系统背景模糊。未截图桌面、未新增采集权限；不承诺复制 Apple 的专有折射效果。</p>
+<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.5.0</div><h1>关掉网页，<br>额度照常更新。</h1><p class="lead">Windows 10 / 11 · 64 位<br>通过本机官方 Codex CLI 定时查询，浏览器扩展保留为备用来源。刷新无需临时打开网页。</p></header>
+<div class="callout"><strong>在现有应用内更新。</strong><br>已有 2.4.1 安装版可在「设置 → 版本与更新」检查新版，下载完成后点击「重启并更新」，无需手动下载测试安装器。正式发布审批完成前不会收到新版。登录由官方 CLI 管理，悬浮球不读取或复制账号凭据文件；不发起模型任务，也不自动重置额度。</div>
+<h2>2.5.0 界面更新</h2>
+<p>悬浮球平时为 64 像素，只显示剩余百分比；鼠标移上去放大到 104 像素，显示额度窗口和重置时间，移开收起。点击查看详情，拖动移动。详情面板保留简洁布局；Token 和重置次数未提供时隐藏，0 正常显示。</p>
+<p>Windows 11 22H2 及以上请求系统 Acrylic；低染色玻璃可在设置从清透调至深色，默认 16%，范围 0–70%。文字不随底色变淡。较旧系统和减少透明度模式使用实色背景；系统也可能因省电或关闭透明效果回退。悬浮球也使用原生 Acrylic 和圆形窗口区域，让背后应用颜色参与模糊合成；原生模式只调玻璃底色，不降低文字透明度。系统、驱动或窗口状态可能使材质回退，实体 Windows 视觉仍需确认。未截图桌面、未新增采集权限；不承诺复制 Apple 的专有折射效果。</p>
 <h2>首次连接本机 Codex</h2>
 <ol>
-<li>更新至可信渠道正式发布的 2.4.1 桌面安装版。已有安装版可检查签名更新；若新包尚未发布，可按下节运行源码。先退出旧悬浮球。</li>
+<li>更新至可信渠道正式发布的 2.5.0 桌面安装版。已有安装版可检查签名更新；若新包尚未发布，可按下节运行源码。先退出旧悬浮球。</li>
 <li>在 Windows PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后执行 <code>codex.cmd login</code>，在官方流程中使用与网页版相同的 ChatGPT 账号登录。已安装并登录的用户无需重复。npm 安装需要 Node.js/npm；Windows 使用 .cmd 入口，无需更改 PowerShell 执行策略。</li>
 <li>安装后重新打开终端与悬浮球，以取得最新环境。在设置「数据来源」选择「本机 Codex」。填写整数 1–1440 分钟，默认 5，点击「保存」，然后点击「开启读取」。</li>
 <li>点击「立即刷新」，确认成功读取时间及额度。以后保持悬浮球运行即可，浏览器可以关闭。</li>
@@ -49,7 +49,7 @@
 <p><strong>浏览器备用模式需要浏览器运行，本机 Codex 模式不需要。</strong>桌面退出、浏览器重启或扩展重载会使配对失效，扩展重启还需重新开启定时。迁移到本机 Codex 前，请在扩展点击「关闭并撤销授权」，避免旧任务继续尝试打开页面。</p>
 <p>只维护扩展时，在可信仓库执行 <code>git pull --ff-only</code>，成功后执行 <code>npm run extension:update</code>，再在浏览器重新加载并配对。该命令不更新桌面。浏览器仍加载 Downloads 旧目录时需先迁移到固定目录一次。</p>
 <h2>日常使用与应用更新</h2>
-<p>拖动悬浮球移动，点击展开 / 收起。托盘及 <code>Ctrl + Alt + G</code> 可找回面板。设置可调整置顶、透明度、提醒和开机启动，开机启动默认关闭。</p>
+<p>移上悬浮球放大，移开收起；拖动移动，点击打开 / 收起详情面板。托盘及 <code>Ctrl + Alt + G</code> 可找回面板。设置可调整置顶、透明度、提醒和开机启动，开机启动默认关闭。</p>
 <p>已配置更新源的安装版启动约 10 秒后、此后每 6 小时检查更新，也可手动检查。验证 Ed25519 发布签名后下载，再校验完整性；由你点击「重启并更新」。普通退出不安装待更新包，失败保留当前版本。更新包含桌面、Electron 和备用扩展，不包含官方 CLI。</p>
 <p>显示设置和位置保留。固定目录的扩展若更新需在浏览器手动重新加载，重新配对；仅使用本机 Codex 无需加载扩展。开发运行、旧便携版和未配置发布源的安装版没有安装版自动更新能力。</p>
 <p>安装前在 <code>recovery</code> 备份偏好设置，<strong>不是完整程序快照或 NSIS 原子回滚</strong>。安装中断可能需可信安装包修复；手动恢复设置前先退出程序。</p>
@@ -62,5 +62,5 @@
 <p>自动测试使用合成协议和数据，覆盖查询、异常、来源切换、数据校验及既有更新边界。<strong>真实 Windows 安装 / 升级、官方 CLI 登录及账号额度仍需实机验收。</strong>已有 Electron / MV3 检查也不等于完整 Chrome / Edge 权限流程通过。</p>
 <p>卸载前停止开机启动并退出悬浮球，不再使用扩展时在浏览器移除，再从 Windows 已安装应用卸载。用户目录默认保留设置和备份。卸载悬浮球不卸载 CLI，也不退出官方账号。</p>
 <p>完整说明：<a href="README.md">README.md</a> · <a href="SECURITY.md">SECURITY.md</a> · <a href="RELEASE.md">发布流程</a>。</p>
-<footer>GPT 悬浮球 2.4.1 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>
+<footer>GPT 悬浮球 2.5.0 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>
 </main></body></html>

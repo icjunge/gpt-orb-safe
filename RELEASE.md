@@ -1,6 +1,6 @@
-# 维护与发布 · 2.4.1
+# 维护与发布 · 2.5.0
 
-本项目的更新路径为：提交代码 → 稳定版本标签 → GitHub Actions 构建安装包 → 受保护环境签名 → 草稿 Release → 人工审核发布 → 客户端验证并下载 → 用户点击「重启并更新」。创建仓库本身不会让已安装客户端自动获得更新能力。
+本项目的更新路径为：main 提交新版本 → 只读验证与测试 → 自动创建精确提交的稳定版本标签并启动构建 → release 环境审批 → 签名并核对上传资产 → 正式发布 → 客户端验证并下载 → 用户点击「重启并更新」。已有 2.4.1 安装版沿用原公钥接收更新，不必重新安装测试包。
 
 下列 `OWNER/REPOSITORY` 是占位参数，必须替换为实际来源。先检查 `update-config.json`：`repository`、`publicKey` 均为 `null` 表示更新源未启用。首次交付可自动更新的安装版前，必须完成来源和公钥配置；不能先交付停用版本，再期待它自行发现公钥。
 
@@ -21,7 +21,7 @@ npm run release:setup -- icjunge/gpt-orb-safe
 
 如果已克隆仓库，直接进入已有目录并确保 `main` 已与远程同步，不要重复克隆到同一位置。此初始化脚本只用 Node.js 内置模块，不需要先运行 `npm ci`。它会检查仓库、当前分支和发布保护，创建或复用仓库外的本地 Ed25519 私钥，经标准输入将它交给 GitHub 的 `release` 环境 Secret，再把公钥写入 `update-config.json`。不同的既有环境保护或签名公钥会使操作停止，不会被覆盖。运行 `npm run release:setup -- icjunge/gpt-orb-safe --dry-run` 可只检查，不写入。
 
-脚本不自动提交、推送或发布。成功后按它打印的命令提交和推送 `update-config.json`，再创建并推送 `v2.4.1` 标签。保护的签名作业会等待你在 GitHub Actions 审核；完成后生成草稿 Release，检查安装包并正式发布。为便于单人维护，初始化允许发布者审核自己的发布；脚本不会执行审核或跳过审核。
+脚本不自动提交、推送或发布。成功后按它打印的命令提交和推送 `update-config.json`，再创建并推送 `v2.5.0` 标签。保护的签名作业会等待你在 GitHub Actions 审核；审核前检查构建和变更，批准后会签名、核验资产并正式发布。为便于单人维护，初始化允许发布者审核自己的发布；脚本不会执行审核或跳过审核。
 
 初始化会显示当前阶段。若 Git 检查失败，错误会指出固定操作名、错误类别和可用的退出码，底层输出仍隐藏，避免泄露凭据。只有查询远端 `main` 的只读操作遇到明确临时连接故障时才自动重试一次；认证、证书及其他错误会直接停止。没有明确连接错误的命令超时也可能是等待凭据，因此不会自动重试。GitHub 写入操作不会自动重试。
 
@@ -85,23 +85,17 @@ gh secret set ORB_UPDATE_PRIVATE_KEY --repo OWNER/REPOSITORY --env release < /se
 
 不要将密钥放进 workflow 文本、Release 附件、issue、日志或桌面设置。构建作业不使用此密钥；只有发布签名作业从环境 Secret 读取，且会确认它与已提交公钥匹配。
 
-工作流用 GitHub 自带的 `github.token` 创建草稿 Release，发布作业获得 `contents: write` 权限，无需给桌面客户端配置任何令牌。
+工作流使用 GitHub 自带的 `github.token`。准备作业仅为精确提交创建版本标签和启动工作流，使用 `contents: write` 与 `actions: write`；真正签名与公开发布仍需通过原 `release` 环境审批，使用 `contents: write`。桌面客户端不持有 GitHub 令牌。
 
 ## 4. 发行一个新版本
 
-1. 更新 `package.json` 与 `package-lock.json` 的版本（例如 `npm version 2.4.1 --no-git-tag-version`），同时将 `extension/manifest.json` 的 `version` 改为完全相同的 `X.Y.Z`（各段不带前导零且不超过 65535）。更新说明文档。
+1. 更新 `package.json` 与 `package-lock.json` 的版本（例如 `npm version 2.5.0 --no-git-tag-version`），同时将 `extension/manifest.json` 的 `version` 改为完全相同的 `X.Y.Z`（各段不带前导零且不超过 65535）。更新说明文档。
 2. 执行 `npm test` 和 `node scripts/validate-release.cjs`。需要预览 Windows 安装包时，在 Windows 构建环境执行 `npm run build:win`；安装包位于 `dist/GPT-Orb-Setup-X.Y.Z-x64.exe`。此步骤只是构建，不上传发布。
-3. 提交并推送代码，再创建与应用版本完全相同的 `vX.Y.Z` 标签并推送。例如当前版本：
+3. 将新版本提交并推送到 `main`；`package.json` 的变更触发 `prepare-release.yml`。验证与测试通过后，准备作业创建指向该事件提交的 `vX.Y.Z` 标签，并显式启动对应标签的 Windows release 工作流。GitHub 自带令牌创建的标签不会自动触发另一个 push 工作流，因此这里使用受支持的 `workflow_dispatch`。
+4. 在 GitHub Actions 查看 `Windows release` 的 Windows 构建结果及变更。构建完成后，在 `release` 环境的待审批部署中点 **Review deployments → Approve and deploy**。审批是签名与公开发布的最后一步；保护规则和原私钥保持不变。
+5. 批准后，工作流签名实际安装器，核对上传资产的摘要，正式发布为最新稳定版。现有安装版可在「设置 → 版本与更新」检查并下载，然后点击「重启并更新」。未批准、构建失败或只有草稿时，客户端不会获得新版。
 
-```sh
-git tag v2.4.1
-git push origin HEAD
-git push origin v2.4.1
-```
-
-`.github/workflows/release.yml` 会在 Windows runner 构建并测试，用 Python 生成源码和扩展 ZIP；后续发布作业校验仓库、公钥、版本标签，签名真实安装包，并创建**草稿** Release。手动运行工作流也必须选择相应版本标签；默认分支不是发行入口。
-
-检查草稿中的资产、版本、提交与变更说明，完成 Windows 安装 / 升级及目标浏览器验收后，再在 GitHub 发布 Release。当前工作流不会自行发布草稿。客户端只读取公开的最新正式 Release；草稿或仅推送代码不会触发用户下载。
+手动推送匹配版本的 `vX.Y.Z` 标签、或在已有标签上手动启动 release 工作流的入口仍保留。默认分支不能直接进入带签名密钥的发布作业。准备作业拒绝同名标签指向不同提交，不改写标签，不覆盖同版本发行资产。若准备流程失败，请检查日志；不要重复创建不同 SHA 的同名标签。若准备时 main 已前进，流程会安全跳过；在最新 main 上手动运行 Actions → Prepare signed update → Run workflow 即可重试，无需本地安装测试包。
 
 不要重写已发行标签或替换同版本资产；需要修复时递增版本重新发布。客户端拒绝比当前安装版本更旧的描述；它没有自动降级或完整程序回滚功能。
 

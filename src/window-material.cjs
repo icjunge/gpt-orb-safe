@@ -44,10 +44,20 @@ function applyPanelMaterial(win,{platform,release,theme}={}){
     try{win.setBackgroundMaterial('none');}catch{}
     try{win.setBackgroundColor(FALLBACK_COLOR);}catch{}
   }
-  // The native host remains an ordinary rounded window, not a layered transparent
+  // The native host remains an ordinary window, not a layered transparent
   // window. Never use whole-window opacity here: it fades text and can switch the
   // host to a layered window. Tint belongs to the renderer's single surface.
   return appearance;
 }
 
-module.exports={supportsAcrylic,systemAppearance,applyPanelMaterial};
+function applyOrbMaterial(win,options={}){
+  const material=applyPanelMaterial(win,options);
+  // Keep the orb and panel paint hints independent. A successful void API call
+  // does not confirm how DWM composites a shaped, inactive, always-on-top HWND.
+  // In particular, do not activate the window or repeatedly reapply the material
+  // to defeat system fallback decisions when another application has focus.
+  return{orbNativeHost:supportsAcrylic(options.platform,options.release),
+    orbNativeBackdrop:material.nativeBackdrop,orbBackdropStatus:material.backdropStatus};
+}
+
+module.exports={supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial};

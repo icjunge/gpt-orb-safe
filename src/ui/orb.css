@@ -1,25 +1,31 @@
-:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","Microsoft YaHei UI",sans-serif;--accent:#dceaf5}
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","Microsoft YaHei UI",sans-serif;--accent:#dceaf5;--glass-tint:16%}
 *{box-sizing:border-box}
-html,body{width:92px;height:104px;margin:0;overflow:hidden;background:transparent;user-select:none}
-body{display:flex;align-items:center;flex-direction:column;padding-top:3px}
-.orb{position:relative;display:block;width:82px;height:82px;padding:0;border:1px solid #ffffff45;border-radius:50%;background:rgba(18,22,27,.58);color:#f4f7fa;cursor:grab;touch-action:none;outline:none;box-shadow:0 3px 10px #0004,inset 0 1px 0 #ffffff22}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;user-select:none}
+body{display:grid;place-items:center}
+.orb{position:relative;display:block;width:100%;height:100%;padding:0;border:1px solid #ffffff45;border-radius:50%;background:rgba(18,22,27,.58);color:#f4f7fa;cursor:grab;touch-action:none;outline:none;box-shadow:inset 0 1px 0 #ffffff20}
+/* The native host supplies the behind-window blur; CSS only adds a light tint. */
+body.native-backdrop .orb{background:rgb(18 22 27 / var(--glass-tint))}
 .orb:active{cursor:grabbing}
-.orb:focus-visible{outline:2px solid #dceaf5;outline-offset:2px}
-.orb:hover{background:rgba(26,31,37,.65)}
-.ring{position:absolute;inset:-1px;width:82px;height:82px;transform:rotate(-90deg)}
-.ring-track{fill:none;stroke:#ffffff1a;stroke-width:1.8}
-.ring-progress{fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linecap:round;stroke-dasharray:232.478;stroke-dashoffset:232.478;transition:stroke-dashoffset .5s ease}
-.orb-core{position:absolute;inset:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:50%}
-.orb-label{margin:0 0 1px 1px;color:#d3d9df;font-size:8px;font-weight:550;letter-spacing:.7px}
-.orb-value{color:#fff;font-size:27px;font-weight:500;line-height:28px;letter-spacing:-1px;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #0004}
-.orb-unit{color:#d3d9df;font-size:8px;line-height:12px}
-.status-dot{position:absolute;right:8px;bottom:6px;width:7px;height:7px;border:1px solid #29313a;border-radius:50%;background:#b5bec8}
-.reset{display:block;width:88px;max-width:88px;margin-top:3px;color:#fff;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:550;line-height:13px;text-shadow:0 1px 2px #101820,0 1px 4px #101820,0 0 1px #101820}
+.orb:focus-visible{box-shadow:inset 0 0 0 2px #e6f2ff}
+.orb-core{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:50%;pointer-events:none}
+.orb-value{color:#fff;font-size:25px;font-weight:520;line-height:1.1;letter-spacing:-1.1px;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #0005}
+.ring,.orb-label,.orb-unit,.reset{display:none}
 .orb[data-tone="warning"]{--accent:#f5cf84}.orb[data-tone="danger"]{--accent:#ff9ea5}.orb[data-tone="muted"]{--accent:#a5b0bc}
-.orb[data-status="ready"] .status-dot{background:#a5ddca}.orb[data-status="starting"] .status-dot{animation:pulse 1s infinite}
-.orb[data-status="error"] .status-dot,.orb[data-stale="true"] .status-dot{background:#f5cf84}
-body.reduced-transparency .orb,body.high-contrast .orb{background:#171b22}
-body.high-contrast .orb-label,body.high-contrast .orb-unit{color:#fff}
-@keyframes pulse{50%{opacity:.4}}
+@media(max-width:79px){.orb[data-wide-value="true"] .orb-value{font-size:20px;letter-spacing:-1.4px}}
+@media(min-width:80px){
+  .orb-value{font-size:29px;line-height:32px;letter-spacing:-1.2px}
+  .ring{display:block;position:absolute;inset:-1px;width:calc(100% + 2px);height:calc(100% + 2px);transform:rotate(-90deg);pointer-events:none}
+  .ring-track{fill:none;stroke:#ffffff1a;stroke-width:1.35}
+  .ring-progress{fill:none;stroke:var(--accent);stroke-width:1.35;stroke-linecap:round;stroke-dasharray:295.310;stroke-dashoffset:295.310;transition:stroke-dashoffset .4s ease}
+  .orb-label,.orb-unit,.reset{display:block;max-width:78px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;text-shadow:0 1px 2px #0005}
+  .orb-label{color:#ecf0f5;font-size:9px;font-weight:500;line-height:12px}
+  .orb-unit{color:#e0e5eb;font-size:9px;line-height:12px}
+  .reset{color:#d9e0e7;font-size:8px;line-height:12px}
+}
+body.reduced-transparency .orb{background:#171b22}
+body.high-contrast .orb{background:Canvas;color:CanvasText;border-color:CanvasText;box-shadow:none}
+body.high-contrast .orb-value,body.high-contrast .orb-label,body.high-contrast .orb-unit,body.high-contrast .reset{color:CanvasText;text-shadow:none}
+body.high-contrast .ring-progress{stroke:CanvasText}
 @media(prefers-reduced-motion:reduce){*,*::after{transition:none!important;animation:none!important}}
-@media(prefers-reduced-transparency:reduce),(prefers-contrast:more){.orb{background:#171b22}.orb-label,.orb-unit{color:#fff}}
+@media(prefers-reduced-transparency:reduce){.orb,body.native-backdrop .orb{background:#171b22}}
+@media(prefers-contrast:more){.orb,body.native-backdrop .orb{background:Canvas;color:CanvasText;border-color:CanvasText}.orb-value,.orb-label,.orb-unit,.reset{color:CanvasText;text-shadow:none}.ring-progress{stroke:CanvasText}}

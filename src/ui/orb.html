@@ -9,18 +9,17 @@
 </head>
 <body>
   <button id="orb" class="orb" aria-label="打开 GPT 用量面板" title="点击查看用量 · 拖动移动">
-    <svg class="ring" viewBox="0 0 82 82" aria-hidden="true">
-      <circle class="ring-track" cx="41" cy="41" r="37"></circle>
-      <circle id="progress" class="ring-progress" cx="41" cy="41" r="37"></circle>
+    <svg class="ring" viewBox="0 0 104 104" aria-hidden="true">
+      <circle class="ring-track" cx="52" cy="52" r="47"></circle>
+      <circle id="progress" class="ring-progress" cx="52" cy="52" r="47"></circle>
     </svg>
     <span class="orb-core">
-      <span id="orb-label" class="orb-label">GPT</span>
+      <span id="orb-label" class="orb-label"></span>
       <span id="orb-value" class="orb-value">—</span>
       <span id="orb-unit" class="orb-unit">待连接</span>
+      <span id="reset" class="reset">点击查看</span>
     </span>
-    <span id="status-dot" class="status-dot"></span>
   </button>
-  <span id="reset" class="reset">点击查看</span>
   <script src="orb.js"></script>
 </body>
 </html>
