@@ -214,9 +214,14 @@ if(!process.versions.electron){
         sum+distance(pixel(view,left+x,top+y),pixel(base,left+x,top+y)),0)/4;
     };
     const clippedCornerDifference=[cornerDifference(a,baseA),cornerDifference(b,baseB)];
-    const shapeClipObserved=clippedCornerDifference.every(value=>value<5);
-    const evidence=focusCorrect&&(!expectShape||shapeClipObserved)&&backgroundColorChange>35&&observedColorChange>5&&blurRelativeToTint<.45;
-    return{size,focusCorrect,shapeClipObserved,baseline,observed,backgroundColorChange,observedColorChange,fineTransfer,colorTransfer,blurRelativeToTint,clippedCornerDifference,
+    const baselineValid=backgroundColorChange>35&&baseline.every(value=>value.fineContrast>5);
+    const orbPixelsObserved=baselineValid&&observed.every((value,index)=>
+      distance(value.mean,baseline[index].mean)>5||Math.abs(value.fineContrast-baseline[index].fineContrast)>3);
+    // Unchanged desktop pixels cannot establish a clipped circle: the entire
+    // fixture might be absent from capture, as on the Windows 11 hosted runner.
+    const shapeClipObserved=baselineValid&&orbPixelsObserved?clippedCornerDifference.every(value=>value<5):null;
+    const evidence=baselineValid&&focusCorrect&&(!expectShape||shapeClipObserved===true)&&observedColorChange>5&&blurRelativeToTint<.45;
+    return{size,focusCorrect,baselineValid,orbPixelsObserved,shapeClipObserved,baseline,observed,backgroundColorChange,observedColorChange,fineTransfer,colorTransfer,blurRelativeToTint,clippedCornerDifference,
       result:evidence?'diffused-background-response-observed':'unverified',
       note:'Heuristic evidence from synthetic desktop pixels, not a guarantee for another Windows device or system policy.'};
   }
@@ -237,7 +242,7 @@ if(!process.versions.electron){
     watch(window);
     if(shape)window.setShape(circleShape(EXPANDED_SIZE));
     let material={orbNativeBackdrop:false,orbBackdropStatus:'none'};
-    if(!layered&&!solid)material=applyOrbMaterial(window,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    if(!layered&&!solid)material=applyOrbMaterial(window,{platform:process.platform,release:os.release(),theme:nativeTheme,nativeHost:!layered});
     else{
       // The constructor's default is not DWMSBT_NONE; query must confirm value 1.
       window.setBackgroundMaterial('none');
@@ -298,7 +303,8 @@ if(!process.versions.electron){
       resizable:false,maximizable:false,minimizable:false,fullscreenable:false,hasShadow:false,skipTaskbar:true,
       webPreferences:{preload:path.join(__dirname,'render-preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
     controller=createOrbController(orb,screen,{platform:process.platform});
-    const appearance=applyOrbMaterial(orb,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    const appearance=applyOrbMaterial(orb,{platform:process.platform,release:os.release(),theme:nativeTheme,
+      nativeHost:supportsAcrylic(process.platform,os.release())});
     report.material=appearance;
     report.windows={transparent:!appearance.orbNativeHost,alwaysOnTop:true,showMethod:'showInactive',setOpacityCalled:false,
       compactShapeRectangles:circleShape(COMPACT_SIZE).length,expandedShapeRectangles:circleShape(EXPANDED_SIZE).length};
@@ -356,6 +362,17 @@ if(!process.versions.electron){
     }else{
       const result={name:'experimental-layered-accent-acrylic',status:'not-measured',reason:'Insufficient remaining desktop diagnostic budget.'};
       report.controls.push(result);console.log(`Native backdrop control: ${JSON.stringify(result)}`);
+    }
+    report.validation={
+      backgroundCalibrationValid:report.evidence.every(item=>item.baselineValid),
+      alphaPositiveControlValid:report.controls.some(control=>
+        ['transparent-dcomp-css-alpha','legacy-layered-css-alpha'].includes(control.name)&&
+        control.metrics?.baselineValid&&control.metrics.focusCorrect&&control.metrics.shapeClipObserved===true&&
+        control.metrics.observedColorChange>5&&control.metrics.blurRelativeToTint>.75)
+    };
+    if(!report.validation.backgroundCalibrationValid||!report.validation.alphaPositiveControlValid){
+      finish('unverified','Synthetic background or alpha controls were not established in captured pixels; neither blur nor visual clipping can be inferred.');
+      return;
     }
     const observed=appearance.orbNativeBackdrop&&report.dwm.hresult===0&&report.dwm.enabled===true&&report.evidence.every(item=>item.result==='diffused-background-response-observed');
     finish(observed?'observed-on-ci':'unverified',observed?

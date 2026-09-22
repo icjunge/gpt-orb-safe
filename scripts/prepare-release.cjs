@@ -1,6 +1,7 @@
 'use strict';
 
 const { releaseContext, githubClient, tagCommit, requireExactTag, requireNewerRelease } = require('./release-github.cjs');
+const { retireUnreleased250 } = require('./retire-unreleased-250.cjs');
 
 async function prepareRelease(api, context) {
   const main = await api('GET', `${context.root}/git/ref/heads/main`);
@@ -27,6 +28,12 @@ async function prepareRelease(api, context) {
     try { await api('POST', `${context.root}/git/refs`, { ref: `refs/tags/${context.tag}`, sha: context.sha }); }
     catch (error) { if (error.status !== 422) throw error; }
   }
+  await requireExactTag(api, context);
+  const retirement = await retireUnreleased250(api, context);
+  if (retirement.warning) console.warn(`::warning::${retirement.warning}`);
+  else if (retirement.message) console.log(retirement.message);
+  const beforeDispatch = await api('GET', `${context.root}/git/ref/heads/main`);
+  if (beforeDispatch?.object?.sha !== context.sha) return { status: 'superseded', message: 'Main advanced before release dispatch; the prepared tag was not moved.' };
   await requireExactTag(api, context);
   // GITHUB_TOKEN-created tags do not trigger push workflows. Dispatch explicitly
   // at the tag so the existing tag-only protected environment still applies.

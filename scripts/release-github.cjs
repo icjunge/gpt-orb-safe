@@ -23,13 +23,14 @@ function releaseContext(env, pkg, config, mode) {
 
 function githubClient(token, fetcher = globalThis.fetch) {
   if (typeof token !== 'string' || !token.trim()) throw new Error('Missing scoped GitHub Actions token.');
-  return async (method, route, body) => {
+  return async (method, route, body, options = {}) => {
     if (!['GET', 'POST', 'PATCH'].includes(method) || !route.startsWith(`/repos/${REPOSITORY}/`) ||
         route.includes('..') || route.includes('#')) throw new Error('Unexpected GitHub API operation.');
     let response;
     try {
+      const timeout = AbortSignal.timeout(60000);
       response = await fetcher(`https://api.github.com${route}`, {
-        method, redirect: 'error', signal: AbortSignal.timeout(60000),
+        method, redirect: 'error', signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
         headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
           'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json', 'User-Agent': 'GPT-Orb-Release' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -41,7 +42,13 @@ function githubClient(token, fetcher = globalThis.fetch) {
       error.status = response.status;
       throw error;
     }
+    const cancelRequest = method === 'POST' && /^\/repos\/icjunge\/gpt-orb-safe\/actions\/runs\/\d+\/cancel$/.test(route);
+    if (cancelRequest && response.status !== 202) throw new Error('GitHub did not accept the ordinary workflow cancellation.');
+    if (response.status === 202 && !cancelRequest) throw new Error('Unexpected asynchronous GitHub API response.');
     if (response.status === 204) return null;
+    // Cancel is asynchronous and may return an empty 202 response. Do not treat
+    // arbitrary accepted responses from other mutation endpoints as success.
+    if (response.status === 202 && cancelRequest) return null;
     try { return await response.json(); }
     catch { throw new Error('GitHub API returned invalid JSON.'); }
   };

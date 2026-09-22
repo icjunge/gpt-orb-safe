@@ -15,7 +15,8 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false} = {}) {
+async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false,
+  gpuCompositing='enabled',gpuFailure=false,gpuTimeout=false} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
   const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[]};
   const userData = '/virtual-orb/user-data';
@@ -25,11 +26,18 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
   let nextTimer = 1;
   const addTimer = (callback, delay) => { const id = nextTimer++; timers.set(id, {callback, delay}); return id; };
   const app = new EventEmitter();
+  let gpuEventSeen=false;
   const nativeTheme=Object.assign(new EventEmitter(),{prefersReducedTransparency:false,shouldUseHighContrastColors:false},theme);
   Object.assign(app, {
     isPackaged:false,
     setName(){}, setAppUserModelId(){}, requestSingleInstanceLock:()=>true,
     whenReady:()=>Promise.resolve(), getVersion:()=> '2.3.0',
+    getGPUFeatureStatus(){assert.equal(gpuEventSeen,true,'GPU features must not be used before gpu-info-update');return{gpu_compositing:gpuCompositing};},
+    getGPUInfo(){
+      if(gpuFailure)throw Error('GPU query unavailable');
+      if(gpuTimeout)return new Promise(()=>{});
+      gpuEventSeen=true;app.emit('gpu-info-update');return Promise.resolve({});
+    },
     getPath:name => { assert.equal(name, 'userData'); return userData; },
     getAppPath:()=>path.resolve(__dirname, '..'),
     setLoginItemSettings:value => calls.login.push(value),
@@ -126,6 +134,11 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     setTimeout:addTimer,setInterval:addTimer,clearTimeout:id=>timers.delete(id),clearInterval:id=>timers.delete(id)
   },{filename:mainFile});
   await settle();
+  if(gpuTimeout||gpuCompositing==='future-value'){
+    const pending=[...timers.values()].filter(timer=>timer.delay===1200);
+    assert.equal(pending.length,1);assert.equal(windows.length,0,'unknown GPU readiness has a bounded wait before choosing a host');
+    pending[0].callback();await settle();
+  }
   assert.deepEqual(calls.errors,[],'controller initialization must succeed');
   assert.equal(providers.length,1); assert.equal(bridges.length,1);
   const sender=windows[1].webContents;
@@ -230,6 +243,45 @@ test('orb material failure does not overwrite a working panel paint hint or invo
   assert.equal(h.windows[0].backgroundColor,'#171b22');
   await h.action('setSettings',{opacity:.55});
   assert.equal(h.windows[0].opacities,undefined);
+});
+
+test('known software and unknown GPU modes use an alpha circle with explicit none while the panel policy is unchanged',async()=>{
+  for(const options of [{gpuCompositing:'disabled_software'},{gpuCompositing:'unavailable_software'},
+    {gpuCompositing:'disabled_off'},{gpuCompositing:undefined,gpuFailure:true},{gpuCompositing:'future-value'},{gpuTimeout:true}]){
+    const h=await launch(options),[orb,panel]=h.windows;
+    assert.equal(orb.options.transparent,true);
+    assert.equal(orb.material,'none');
+    assert.equal(orb.backgroundColor,'#00000000');
+    assert.equal(orb.shapes.length,1);
+    assert.deepEqual(orb.opacities,[1]);
+    assert.equal(h.state().appearance.orbNativeHost,false);
+    assert.equal(h.state().appearance.orbNativeBackdrop,false);
+    assert.equal(h.state().appearance.orbBackdropStatus,'unavailable');
+    assert.equal(panel.options.transparent,false);
+    assert.equal(panel.material,'acrylic');
+    assert.equal(h.app.listenerCount('gpu-info-update'),0,'startup probe must release its listener after the decision');
+  }
+});
+
+test('accessibility at startup chooses an alpha host with an opaque circular surface and keeps the user opacity preference',async()=>{
+  for(const theme of [{prefersReducedTransparency:true},{shouldUseHighContrastColors:true},{inForcedColorsMode:true}]){
+    const h=await launch({theme,preferences:{settings:{opacity:.65}}}),[orb]=h.windows;
+    assert.equal(orb.options.transparent,true);
+    assert.equal(orb.material,'none');
+    assert.equal(orb.backgroundColor,'#00000000');
+    assert.deepEqual(orb.opacities,[1]);
+    assert.equal(h.state().appearance.orbNativeHost,false);
+    assert.equal(h.state().appearance.orbBackdropStatus,'reduced-transparency');
+    assert.equal(h.state().settings.opacity,.65);
+    Object.assign(h.nativeTheme,{prefersReducedTransparency:false,shouldUseHighContrastColors:false,inForcedColorsMode:false});
+    h.nativeTheme.emit('updated');
+    assert.equal(orb.material,'none','a startup fallback never requests acrylic on its transparent host');
+    assert.equal(orb.opacities.at(-1),.65);
+    assert.equal(h.state().appearance.orbNativeHost,false);
+    h.nativeTheme.shouldUseHighContrastColors=true;h.nativeTheme.emit('updated');
+    await h.action('setSettings',{opacity:.55});
+    assert.equal(orb.opacities.at(-1),1,'whole-window opacity must not fade high-contrast text');
+  }
 });
 
 test('panel resize accepts only bounded integer heights from the exact panel main frame',async()=>{
