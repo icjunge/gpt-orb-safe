@@ -93,11 +93,13 @@ if(!process.versions.electron){
     const child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-File',path.join(__dirname,'windows-backdrop-native.ps1')],
       {env:{...process.env,GPT_ORB_BACKDROP_PID:String(process.pid)},stdio:['pipe','pipe','pipe'],windowsHide:true});
     const waiting=new Map();let stderr='',sequence=0,stopped=false;
-    const pending=key=>new Promise((resolve,reject)=>{
-      const deadline=setTimeout(()=>{waiting.delete(key);reject(new Error(`Native metadata query timed out: ${key}`));},6500);
+    const pending=(key,timeoutMs=6500)=>new Promise((resolve,reject)=>{
+      const deadline=setTimeout(()=>{waiting.delete(key);reject(new Error(`Native metadata query timed out: ${key}`));},timeoutMs);
       waiting.set(key,{resolve:value=>{clearTimeout(deadline);resolve(value);},reject:error=>{clearTimeout(deadline);reject(error);}});
     });
-    const system=pending('system');
+    // Cold .NET/PowerShell startup under Windows ARM x64 emulation can exceed
+    // the normal per-window query budget. The outer desktop deadline is unchanged.
+    const system=pending('system',15000);
     const fail=error=>{for(const value of waiting.values())value.reject(error);waiting.clear();};
     child.on('error',fail);
     child.on('exit',code=>{if(!stopped)fail(new Error(`Native metadata helper exited ${code}: ${stderr.slice(0,1200)}`));});

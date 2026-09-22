@@ -4,6 +4,9 @@ on:
     branches: [main]
     paths:
       - .github/workflows/windows11-backdrop.yml
+      - test/windows11-backdrop-run.cjs
+      - test/windows-backdrop-smoke.cjs
+      - test/windows-backdrop-native.ps1
   workflow_dispatch:
 permissions:
   contents: read
