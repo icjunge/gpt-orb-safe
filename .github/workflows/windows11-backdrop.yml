@@ -1,0 +1,42 @@
+name: Windows 11 Backdrop Diagnostic
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/windows11-backdrop.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          architecture: x64
+          cache: npm
+      - name: Install pinned dependencies without package scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify x64 Node and the pinned Electron version
+        run: node -e "if(process.platform!=='win32'||process.arch!=='x64'||require('electron/package.json').version!==require('./package.json').devDependencies.electron)throw new Error('Expected Windows x64 Node and the pinned Electron package');console.log(process.platform,process.arch,require('electron/package.json').version)"
+      - name: Install the official Electron runtime with its bundled checksums
+        run: node node_modules/electron/install.js
+        env:
+          ELECTRON_INSTALL_PLATFORM: win32
+          ELECTRON_INSTALL_ARCH: x64
+      - name: Diagnose native backdrops on Windows 11 Client
+        run: node test/windows11-backdrop-run.cjs
+      - name: Keep Windows 11 evidence, including unverified results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows11-backdrop-diagnostic
+          if-no-files-found: warn
+          retention-days: 14
+          path: dist/windows11-backdrop-diagnostic/

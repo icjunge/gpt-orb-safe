@@ -77,6 +77,7 @@ if(!process.versions.electron){
     if(finished)return;finished=true;clearTimeout(timer);
     Object.assign(report,{status,reason});
     if(error)report.error=String(error.stack||error);
+    report.gpuFeatureStatus=app.isReady()?app.getGPUFeatureStatus():{status:'not-ready'};
     nativeProbe?.stop();
     writeReport(report);
     // Synthetic fixture metadata stays inspectable when artifact transfers are unavailable.
