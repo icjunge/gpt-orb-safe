@@ -19,7 +19,7 @@ nativeTheme.themeSource='dark';
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
 let codexProvider=null;
-let panelHeight=360;
+let panelHeight=240;
 let appearance=systemAppearance(nativeTheme);
 const unavailableUpdates=()=>({status:'unconfigured',currentVersion:app.getVersion(),availableVersion:null,progress:null,
   message:'请使用支持更新的安装版，并启用发布源。',lastCheckedAt:null,repository:null});
@@ -53,18 +53,18 @@ function clampPosition(position,width=92,height=104){
     y:Math.round(Math.max(a.y,Math.min(position?.y??a.y+a.height/2-height/2,a.y+a.height-height)))};
 }
 function anchorPanel(){if(!panelWindow||panelWindow.isDestroyed()||!orbWindow)return;
-  const b=orbWindow.getBounds(),a=screen.getDisplayMatching(b).workArea,width=Math.min(380,a.width),height=Math.min(panelHeight,a.height);
+  const b=orbWindow.getBounds(),a=screen.getDisplayMatching(b).workArea,width=Math.min(340,a.width),height=Math.min(panelHeight,a.height);
   let x=b.x-width-10;if(x<a.x)x=b.x+b.width+10;x=Math.max(a.x,Math.min(x,a.x+a.width-width));
   panelWindow.setBounds({x,y:Math.max(a.y,Math.min(b.y-60,a.y+a.height-height)),width,height});
 }
 function resizePanel(payload){
   if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).length!==1||!Object.hasOwn(payload,'height')||
-    !Number.isInteger(payload.height)||payload.height<360||payload.height>660||!panelWindow||panelWindow.isDestroyed())return{ok:false};
+    !Number.isInteger(payload.height)||payload.height<240||payload.height>660||!panelWindow||panelWindow.isDestroyed())return{ok:false};
   panelHeight=payload.height;
   // Content changes resize in place; only an explicit open or orb drag anchors
   // to the orb. The renderer cannot choose a position, width or display.
   const b=panelWindow.getBounds(),a=screen.getDisplayMatching(b).workArea;
-  const width=Math.min(380,a.width),height=Math.min(panelHeight,a.height);
+  const width=Math.min(340,a.width),height=Math.min(panelHeight,a.height);
   const x=Math.max(a.x,Math.min(b.x,a.x+a.width-width));
   const y=Math.max(a.y,Math.min(b.y,a.y+a.height-height));
   if(b.x!==x||b.y!==y||b.width!==width||b.height!==height)panelWindow.setBounds({x,y,width,height});
@@ -90,7 +90,7 @@ function createWindows(){
       webSecurity:true,webviewTag:false,backgroundThrottling:true,spellcheck:false}};
   orbWindow=new BrowserWindow({...common,width:92,height:104,...clampPosition(savedPosition),hasShadow:false});
   const nativePanel=supportsAcrylic(process.platform,os.release());
-  panelWindow=new BrowserWindow({...common,width:380,height:panelHeight,hasShadow:true,roundedCorners:true,
+  panelWindow=new BrowserWindow({...common,width:340,height:panelHeight,hasShadow:true,roundedCorners:true,
     transparent:!nativePanel});
   const updateAppearance=()=>{
     appearance=applyPanelMaterial(panelWindow,{platform:process.platform,release:os.release(),theme:nativeTheme});

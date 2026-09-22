@@ -142,8 +142,8 @@ test('native acrylic applies only to the panel and follows accessibility changes
   assert.equal(orb.material,undefined);
   assert.equal(panel.options.transparent,false);
   assert.equal(panel.options.roundedCorners,true);
-  assert.equal(panel.options.width,380);
-  assert.equal(panel.options.height,360);
+  assert.equal(panel.options.width,340);
+  assert.equal(panel.options.height,240);
   assert.equal(h.nativeTheme.themeSource,'dark');
   assert.equal(panel.material,'acrylic');
   assert.equal(panel.backgroundColor,'#00000000');
@@ -166,9 +166,9 @@ test('native acrylic applies only to the panel and follows accessibility changes
 
 test('panel resize accepts only bounded integer heights from the exact panel main frame',async()=>{
   const h=await launch(),[orb,panel]=h.windows;
-  panel.setBounds({x:200,y:180,width:380,height:360});
+  panel.setBounds({x:200,y:180,width:340,height:240});
   const before=clone(panel.getBounds());
-  for(const payload of [undefined,null,{},[],{height:'400'},{height:359},{height:661},{height:400.5},
+  for(const payload of [undefined,null,{},[],{height:'400'},{height:239},{height:661},{height:400.5},
     {height:NaN},{height:Infinity},{height:400,width:900},{height:400,x:0},Object.assign(Object.create({height:400}),{unexpected:true})]){
     assert.equal((await h.action('panelResize',payload)).ok,false);
     assert.deepEqual(clone(panel.getBounds()),before);
@@ -179,10 +179,10 @@ test('panel resize accepts only bounded integer heights from the exact panel mai
     assert.equal((await h.action('panelResize',{height:600},event)).ok,false);
     assert.deepEqual(clone(panel.getBounds()),before);
   }
-  for(const height of [360,376,600,660]){
+  for(const height of [240,280,600,660]){
     assert.equal((await h.action('panelResize',{height})).ok,true);
     assert.equal(panel.getBounds().height,height);
-    assert.equal(panel.getBounds().width,380);
+    assert.equal(panel.getBounds().width,340);
     assert.equal(panel.getBounds().x,200);
     assert.equal(panel.getBounds().y,180);
   }
@@ -194,14 +194,14 @@ test('panel resize accepts only bounded integer heights from the exact panel mai
 test('content resizing stays on the panel display and clamps within its work area without anchoring to the orb',async()=>{
   const h=await launch(),[orb,panel]=h.windows;
   orb.setBounds({x:500,y:200,width:92,height:104});
-  panel.setBounds({x:2920,y:850,width:380,height:360});
+  panel.setBounds({x:2920,y:850,width:340,height:240});
   h.screen.getDisplayMatching=b=>({workArea:b.x>=1920?{x:1920,y:0,width:1280,height:1024}:{x:0,y:0,width:1920,height:1080}});
   await h.action('panelResize',{height:600});
-  assert.deepEqual({x:panel.bounds.x,y:panel.bounds.y,width:panel.bounds.width,height:panel.bounds.height},{x:2820,y:424,width:380,height:600});
+  assert.deepEqual({x:panel.bounds.x,y:panel.bounds.y,width:panel.bounds.width,height:panel.bounds.height},{x:2860,y:424,width:340,height:600});
   panel.setBounds({x:-1150,y:-50});
   h.screen.getDisplayMatching=()=>({workArea:{x:-1280,y:-200,width:1280,height:720}});
   await h.action('panelResize',{height:660});
-  assert.deepEqual({x:panel.bounds.x,y:panel.bounds.y,width:panel.bounds.width,height:panel.bounds.height},{x:-1150,y:-140,width:380,height:660});
+  assert.deepEqual({x:panel.bounds.x,y:panel.bounds.y,width:panel.bounds.width,height:panel.bounds.height},{x:-1150,y:-140,width:340,height:660});
 });
 
 test('anchoring restores the desired content height after a small display temporarily limits it',async()=>{
@@ -214,8 +214,8 @@ test('anchoring restores the desired content height after a small display tempor
   orb.setBounds({x:700,y:400,width:92,height:104});
   await h.action('togglePanel');
   assert.equal(panel.bounds.height,660);
-  assert.equal(panel.bounds.width,380);
-  assert.equal(panel.bounds.x,310);
+  assert.equal(panel.bounds.width,340);
+  assert.equal(panel.bounds.x,350);
   assert.equal(panel.bounds.y,340);
 });
 

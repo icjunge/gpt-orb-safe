@@ -10,10 +10,10 @@
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand"><svg class="brand-symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg><span id="panel-title">Codex</span><span id="connection-dot" class="connection-dot" aria-hidden="true"></span></div>
+      <div class="brand"><span id="panel-title">Codex</span><span id="connection-dot" class="connection-dot" aria-hidden="true"></span></div>
       <div class="topbar-actions">
-        <button id="quick-refresh-button" class="icon-button" aria-label="刷新用量" title="刷新用量" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 8V3l-3 3a8 8 0 1 0 2.5 9M20 3h-5"/></svg></button>
-        <button id="settings-button" class="icon-button" aria-label="打开设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.7 2.3-2 .9-2.2-.5-2 3.5 1.6 1.7v2.2l-1.6 1.7 2 3.5 2.2-.5 2 .9L10 21h4l.7-2.3 2-.9 2.2.5 2-3.5-1.6-1.7v-2.2l1.6-1.7-2-3.5-2.2.5-2-.9L14 3z"/><circle cx="12" cy="12" r="3"/></svg></button>
+
+        <button id="settings-button" class="icon-button" aria-label="打开设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="more-mark" d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
         <button id="close-button" class="icon-button" aria-label="收起面板" title="收起面板"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
     </header>
@@ -77,7 +77,7 @@ if ($LASTEXITCODE -eq 0) { codex.cmd login }</code></pre>
         <section id="browser-settings" class="settings-group"><h2>浏览器同步</h2><p class="group-description">在浏览器扩展的「后台定时刷新」中设置间隔。开启后可关闭用量页，浏览器需保持运行。</p><p id="extension-status" class="group-description">首次加载固定扩展文件夹；以后更新后在扩展内点「重新加载」，并重新配对。</p><p id="extension-error" class="extension-notice hidden" role="status"></p><button id="dashboard-button" class="setting-link"><span>打开官方用量页面</span><span aria-hidden="true">↗</span></button><button id="folder-settings-button" class="setting-link"><span>打开固定扩展文件夹</span><span aria-hidden="true">↗</span></button><button id="pair-settings-button" class="setting-link"><span>复制本次配对码</span><span aria-hidden="true">⧉</span></button><button id="disconnect-button" class="setting-link danger"><span>断开同步</span><span aria-hidden="true">↗</span></button><button id="help-button" class="setting-link"><span>查看使用说明</span><span aria-hidden="true">↗</span></button></section>
         <section class="settings-group updates-group" aria-labelledby="updates-heading">
           <h2 id="updates-heading">版本与更新</h2>
-          <div class="update-version-row"><span>桌面版本 <strong id="current-version">2.4.0</strong></span><span id="available-version" class="update-version-tag hidden"></span></div>
+          <div class="update-version-row"><span>桌面版本 <strong id="current-version">2.4.1</strong></span><span id="available-version" class="update-version-tag hidden"></span></div>
           <p id="update-status" class="update-status" role="status">更新源尚未启用</p>
           <div id="update-progress-row" class="update-progress-row hidden"><progress id="update-progress" max="100" value="0" aria-label="更新下载进度"></progress><span id="update-progress-value">0%</span></div>
           <p id="update-last-checked" class="update-last-checked hidden"></p>
@@ -87,12 +87,13 @@ if ($LASTEXITCODE -eq 0) { codex.cmd login }</code></pre>
           <button id="release-page-button" class="setting-link hidden"><span>查看版本发布记录</span><span aria-hidden="true">↗</span></button>
           <button id="recovery-folder-button" class="setting-link"><span>打开更新备份文件夹</span><span aria-hidden="true">↗</span></button>
         </section>
+        <button id="footer-dashboard-button" class="setting-link" title="打开官方用量页" aria-label="打开官方用量页"><span>官方用量页</span><span aria-hidden="true">↗</span></button>
         <p id="settings-source-note" class="settings-note">本机 Codex 模式无需浏览器配对。快捷键 Ctrl + Alt + G 可展开或收起面板。</p>
-        <div class="settings-footer"><span>GPT Orb <span id="footer-version" class="version-tag">2.4.0 · LOCAL</span><small>独立工具 · 非 OpenAI 官方出品</small></span><button id="quit-button" class="text-button danger">退出工具</button></div>
+        <div class="settings-footer"><span>GPT Orb <span id="footer-version" class="version-tag">2.4.1 · LOCAL</span><small>独立工具 · 非 OpenAI 官方出品</small></span><button id="quit-button" class="text-button danger">退出工具</button></div>
         <details class="scope-note"><summary><span class="info-symbol" aria-hidden="true">i</span>数据说明</summary><p id="scope-description">仅显示官方返回的数据，不代表所有 ChatGPT 对话的 Token 总量。读取时间不等于服务器数据更新时间。</p></details>
       </section>
     </div>
-    <footer class="statusbar"><span id="sync-status" aria-live="polite">等待连接</span><time id="record-time">—</time><button id="footer-dashboard-button" class="footer-link" title="打开官方用量页" aria-label="打开官方用量页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M10 5H5v14h14v-5"/></svg></button></footer>
+    <footer class="statusbar"><span id="sync-status" aria-live="polite">等待连接</span><time id="record-time">—</time><button id="quick-refresh-button" class="icon-button" aria-label="刷新用量" title="刷新用量" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 8V3l-3 3a8 8 0 1 0 2.5 9M20 3h-5"/></svg></button></footer>
     <div id="toast" class="toast hidden" role="status"></div>
   </main>
   <script src="panel.js"></script>

@@ -125,8 +125,43 @@ test('each quota is shown once with one countdown and the precise reset time on 
     assert.match(row.children[3].textContent, /后重置$/);
     assert.match(row.children[3].title, /重置时间：/);
   }
-  assert.match(h.node('record-time').textContent, /^\d{2}:\d{2} 读取$/);
+  assert.match(h.node('record-time').textContent, /^\d{2}:\d{2}$/);
   assert.match(h.node('record-time').title, /非服务器统计更新时间/);
+});
+
+test('additional quota windows and percentage boundaries remain visible in the compact overview', async () => {
+  const state = fixture();
+  state.snapshot.windows = [
+    { id: 'main-primary', kind: 'cli', label: 'Codex · 5 小时', usedPercent: 0, resetAt: Date.now() + 3600000 },
+    { id: 'main-secondary', kind: 'cli', label: 'Codex · 每周', usedPercent: 100, resetAt: Date.now() + 86400000 },
+    { id: 'spark', kind: 'cli', label: 'Spark · 每周', usedPercent: 20, resetAt: Date.now() + 86400000 },
+    { id: 'invalid', kind: 'cli', label: '无效数值', usedPercent: NaN }
+  ];
+  const h = harness('panel', state); await flush();
+  const rows = h.node('limits-list').children[0].children;
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map(row => row.children[0].textContent), ['5 小时', '每周', 'Spark · 每周']);
+  assert.deepEqual(rows.map(row => row.children[1].textContent), ['100%', '0%', '80%']);
+  assert.equal(rows[1].children[2].children[0].className, 'window-fill danger');
+  assert.doesNotMatch(h.textTree(), /无效数值/);
+});
+
+test('compact footer retains error states and full timestamp meaning without repeating the read label', async () => {
+  const state = fixture();
+  const h = harness('panel', state); await flush();
+  assert.equal(h.node('sync-status').textContent, '自动刷新');
+  assert.match(h.node('record-time').textContent, /^\d{2}:\d{2}$/);
+  assert.match(h.node('record-time').title, /^读取时间：/);
+  h.change({ ...state, error: '查询未完成', codex: { ...state.codex, state: 'error', message: '查询未完成' } });
+  assert.equal(h.node('sync-status').textContent, '读取失败');
+  assert.equal(h.node('freshness-note').classList.contains('hidden'), false);
+  assert.match(h.node('freshness-note').textContent, /保留上次读数/);
+  assert.equal(h.node('data-content').classList.contains('hidden'), false);
+  assert.match(h.textTree(), /54%/);
+  h.change({ ...state, usageSource: 'browser', settings: { usageSource: 'browser' }, snapshot: { ...state.snapshot, source: 'manual-page' } });
+  assert.equal(h.node('sync-status').textContent, '人工记录');
+  assert.match(h.node('record-time').textContent, /^\d{2}:\d{2}$/);
+  assert.match(h.node('record-time').title, /^人工记录时间：/);
 });
 
 test('missing or invalid reset credits stay hidden while zero remains visible', async () => {
@@ -160,7 +195,7 @@ test('empty state makes recovery available without automatically switching the a
   assert.equal(h.node('overview').classList.contains('hidden'), false);
 });
 
-test('header refresh calls the native provider once and is unavailable when stopped or in browser mode', async () => {
+test('quick refresh calls the native provider once and is unavailable when stopped or in browser mode', async () => {
   let release;
   const state = fixture();
   const h = harness('panel', state, () => new Promise(resolve => { release = resolve; })); await flush();
@@ -322,7 +357,7 @@ test('an earlier tint save cannot overwrite a newer drag and failed saves restor
 test('native freshness follows configured interval and stop preserves a historical reading', async () => {
   const state = fixture(); state.snapshot.capturedAt = Date.now() - 600000;
   const panel = harness('panel', state), orb = harness('orb', state); await flush();
-  assert.equal(panel.node('sync-status').textContent, '自动读取');
+  assert.equal(panel.node('sync-status').textContent, '自动刷新');
   assert.equal(orb.node('orb-unit').textContent, 'Codex 剩余');
   const stopped = { ...state, codex: { ...state.codex, enabled: false, state: 'disabled' } };
   panel.change(stopped); orb.change(stopped);

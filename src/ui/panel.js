@@ -121,9 +121,9 @@
     const current = codex.state || 'disabled';
     const labels = { disabled: '尚未开启', reading: '正在读取', ready: '已连接', 'not-found': '未找到 Codex CLI', 'needs-login': '需要登录', unsupported: '请更新 Codex CLI', error: '读取未完成' };
     const messages = {
-      disabled: '开启后自动刷新，无需打开网页。',
-      reading: '正在查询 Codex 用量…',
-      ready: '已连接，按设定间隔自动刷新。',
+      disabled: '开启后自动刷新。',
+      reading: '正在查询用量…',
+      ready: '按设定间隔自动刷新。',
       'not-found': '请先安装官方 Codex CLI，完成登录后重新开启；若刚安装，可退出并重新启动悬浮球。',
       'needs-login': '请在 PowerShell 运行 codex.cmd login，登录同一个 ChatGPT 账号后重新开启。',
       unsupported: '当前 Codex CLI 不支持所需查询，请用下方安装命令更新后重试。',
@@ -178,7 +178,7 @@
     else if (state.error && hasSnapshot) note = '同步异常，保留上次读数。';
     setText('freshness-note', note);
     hidden('freshness-note', !note);
-    const codexStatuses = { disabled: hasSnapshot ? '已暂停' : '未连接', reading: hasSnapshot ? '刷新中…' : '连接中…', ready: historic ? '上次记录' : '自动读取', 'not-found': '待安装 CLI', 'needs-login': '待登录', unsupported: 'CLI 待更新', error: '读取失败' };
+    const codexStatuses = { disabled: hasSnapshot ? '已暂停' : '未连接', reading: hasSnapshot ? '刷新中…' : '连接中…', ready: historic ? '上次记录' : '自动刷新', 'not-found': '待安装 CLI', 'needs-login': '待登录', unsupported: 'CLI 待更新', error: '读取失败' };
     const status = native ? codexStatuses[state.codex?.state || 'disabled'] || codexStatuses.error : state.status === 'starting' ? '启动中…' : state.error ? '同步异常' : !state.bridge?.listening ? '同步未启动' : !hasSnapshot ? '待配对' : isManual ? '人工记录' : isStale || !state.bridge?.connected ? '上次记录' : '浏览器同步';
     setText('sync-status', status);
     const canPair = !native && !!state.bridge?.listening;
@@ -194,7 +194,7 @@
   function renderUpdates() {
     const updates = state.updates || {};
     const status = updates.status || 'unconfigured';
-    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.4.0';
+    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.4.1';
     const availableVersion = typeof updates.availableVersion === 'string' ? updates.availableVersion : '';
     const messages = {
       unconfigured: '更新源尚未启用',
@@ -297,7 +297,7 @@
     setText('unrecognized-note', native ? '官方暂未提供可识别的额度窗口。' : '页面布局暂未识别，可在扩展中手动记录官方页面数值。');
     hidden('unrecognized-note', !!items.length || manual());
     const timestamp = current?.capturedAt;
-    setText('record-time', finite(timestamp) ? `${new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })} ${manual() ? '记录' : '读取'}` : '');
+    setText('record-time', finite(timestamp) ? new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '');
     $('record-time').title = finite(timestamp) ? `${manual() ? '人工记录' : '读取'}时间：${localTime(timestamp)}${manual() ? '' : '（非服务器统计更新时间）'}` : '';
     if (finite(timestamp)) $('record-time').dateTime = new Date(timestamp).toISOString();
     else $('record-time').removeAttribute('datetime');
@@ -325,7 +325,7 @@
         (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
       const natural = settingsVisible ? 600 : Math.ceil($('overview').getBoundingClientRect().height + chrome);
       if (!finite(natural)) return;
-      const height = Math.max(360, Math.min(660, natural));
+      const height = Math.max(240, Math.min(660, natural));
       if (height === requestedHeight) return;
       requestedHeight = height;
       try {

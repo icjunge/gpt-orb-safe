@@ -18,7 +18,7 @@ ipcMain.handle('test:action',async(event,action)=>{
   if(action.name==='panelResize'){
     const view=views.find(view=>view.w.webContents===event.sender);
     const height=action.payload?.height;
-    if(view?.page!=='panel'||!Number.isInteger(height)||height<360||height>660)return {ok:false};
+    if(view?.page!=='panel'||!Number.isInteger(height)||height<240||height>660)return {ok:false};
     if(view.autoResize!==false)await resize(view,view.width,Math.min(height,panelHeightLimit));
     return {ok:true};
   }
@@ -53,7 +53,7 @@ async function shot(view,name){view.w.webContents.invalidate();await wait(250);c
 async function materialIllustration(view){
   const shellHeight=view.height;
   view.autoResize=false;
-  await resize(view,460,shellHeight+110);
+  await resize(view,420,shellHeight+130);
   await run(view,`(() => {
     const background=document.createElement('div');background.id='test-material-background';
     background.setAttribute('aria-hidden','true');document.body.prepend(background);
@@ -66,17 +66,17 @@ async function materialIllustration(view){
     body { display:grid;place-items:center;background:#192c30; }
     #test-material-background { position:absolute;inset:0;background:radial-gradient(ellipse at 4% 26%,#bb985b 0%,transparent 54%),radial-gradient(ellipse at 96% 82%,#588575 0%,transparent 64%),linear-gradient(135deg,#594b5f,#142b3c 64%); }
     #test-material-background::after {content:'';position:absolute;inset:0;background:linear-gradient(143deg,transparent 26%,#bdcdd82b 27%,#bdcdd808 38%,transparent 39%,transparent 63%,#cab98826 64%,#cab98810 72%,transparent 73%);}
-    .shell { width:380px;height:${shellHeight}px;backdrop-filter:blur(18px) saturate(1.3); }
+    .shell { width:340px;height:${shellHeight}px;backdrop-filter:blur(18px) saturate(1.3); }
     #test-material-caption { position:absolute;bottom:21px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:.3px;color:#e8edf0;background:#142129e8;padding:9px; }
   `);
   await shot(view,'native-material-illustration.png');
   await view.w.webContents.removeInsertedCSS(css);
   await run(view,"document.getElementById('test-material-background').remove();document.getElementById('test-material-caption').remove()");
-  await resize(view,380,shellHeight);view.autoResize=true;
+  await resize(view,340,shellHeight);view.autoResize=true;
 }
 app.whenReady().then(async()=>{
   fs.mkdirSync(out,{recursive:true});
-  const panel=await make('panel',380,540);
+  const panel=await make('panel',340,240);
   equal(await run(panel,"document.getElementById('empty-state').classList.contains('hidden')"),false);
   equal(await run(panel,"document.getElementById('setup-card').getBoundingClientRect().height"),0,'connection instructions are tucked into settings');
   await run(panel,"document.getElementById('configure-button').focus()");
@@ -226,7 +226,7 @@ app.whenReady().then(async()=>{
       {id:'codex-secondary',kind:'cli',label:'Codex · 每周',usedPercent:36,resetAt:now+194340000},
       {id:'spark-weekly',kind:'cli',label:'Spark · 每周',usedPercent:18,resetAt:now+289340000}
     ],tokens:{today:null,total:null},tokenScope:'account',tokenDate:'2026-09-19',resetCredits:null}};
-  panelHeightLimit=660;await resize(panel,380,540);await change(panel,native);
+  panelHeightLimit=660;await resize(panel,340,240);await change(panel,native);
   await run(panel,"document.querySelector('.main-scroll').scrollTop=0;document.getElementById('panel-title').textContent='预览 · 示例数据'");
   equal(await run(panel,"document.getElementById('token-section').open"),false);
   equal(await run(panel,"document.getElementById('token-metrics').classList.contains('hidden')"),true);
@@ -238,7 +238,8 @@ app.whenReady().then(async()=>{
   equal(actions.at(-1).name,'refreshCodex');
   await run(panel,"document.getElementById('toast').classList.add('hidden')");
   equal(await run(panel,"document.querySelectorAll('.limit-window').length"),3);
-  equal(await run(panel,"document.querySelector('.main-scroll').scrollHeight<=document.querySelector('.main-scroll').clientHeight"),true,'three quota rows fit the main panel');
+  equal(await run(panel,`(() => { const rows=[...document.querySelectorAll('.limit-window')].map(row=>row.getBoundingClientRect());return rows[0].top===rows[1].top&&rows[2].top>rows[0].top&&rows[2].width>rows[0].width*1.8; })()`),true,'primary quota windows share a row and the third window spans below them');
+  equal(await run(panel,"document.querySelector('.main-scroll').scrollHeight<=document.querySelector('.main-scroll').clientHeight"),true,'three quota windows fit the main panel');
   equal(await run(panel,"document.getElementById('reset-credits-row').classList.contains('hidden')"),true,'unknown reset credits do not occupy space');
   equal(await run(panel,"getComputedStyle(document.querySelector('.shell')).backgroundColor"),'rgb(36, 40, 46)','unsupported compositor uses an honest readable fallback');
   await shot(panel,'native-tokens-unavailable.png');
@@ -246,9 +247,13 @@ app.whenReady().then(async()=>{
   await change(panel,{...native,snapshot:{...native.snapshot,windows:native.snapshot.windows.slice(0,2)}});
   await run(panel,"document.getElementById('panel-title').textContent='预览 · 示例数据'");
   equal(panel.height<threeWindowHeight,true,'two quota windows request a shorter panel than three');
-  equal(panel.height>=360&&panel.height<=460,true,'two-window panel keeps a compact usable height');
+  equal(panel.height>=240&&panel.height<=360,true,'two-window panel keeps a compact usable height');
   await shot(panel,'native-two-windows.png');
-  await change(panel,native);
+  await change(panel,{...native,snapshot:{...native.snapshot,windows:native.snapshot.windows.slice(0,2).map((window,index)=>({...window,usedPercent:index?100:0}))}});
+  equal(await run(panel,"[...document.querySelectorAll('.window-value')].map(value=>value.textContent).join(',')"),'100%,0%');
+  equal(await run(panel,"[...document.querySelectorAll('.window-value')].every(value=>value.scrollWidth<=value.clientWidth)"),true,'full and empty quota figures fit the compact columns');
+  await shot(panel,'native-limits-extremes.png');
+  await change(panel,{...native,snapshot:{...native.snapshot,windows:native.snapshot.windows.slice(0,2)}});
   await materialIllustration(panel);
   await change(panel,native);
   const longLabel='<img src=x onerror=alert(1)> ' + '很长的服务端额度窗口名称'.repeat(8);
@@ -256,6 +261,7 @@ app.whenReady().then(async()=>{
   equal(await run(panel,"document.querySelector('.window-name').textContent"),longLabel);
   equal(await run(panel,"document.querySelectorAll('.window-name img').length"),0);
   equal(await run(panel,"document.documentElement.scrollWidth<=innerWidth&&document.querySelector('.main-scroll').scrollWidth<=document.querySelector('.main-scroll').clientWidth"),true,'long untrusted labels never overflow horizontally');
+  await shot(panel,'native-long-label.png');
   await change(panel,native);
   equal(await run(panel,"document.getElementById('token-section').classList.contains('hidden')"),true);
   const partial={...native,snapshot:{...native.snapshot,tokens:{today:0,total:null}}};
@@ -279,7 +285,7 @@ app.whenReady().then(async()=>{
   await run(panel,"document.querySelector('.main-scroll').scrollTop=0");
   equal(await run(panel,"document.documentElement.scrollWidth<=innerWidth&&document.querySelector('.main-scroll').scrollWidth<=document.querySelector('.main-scroll').clientWidth"),true,'compact panel has no horizontal overflow');
   await shot(panel,'native-compact.png');
-  panelHeightLimit=660;await resize(panel,380,540);
+  panelHeightLimit=660;await resize(panel,340,240);
   await run(panel,"document.getElementById('settings-button').click()");
   await shot(panel,'native-settings.png');
   const tintState={...native,appearance:{nativeBackdrop:true,backdropStatus:'requested'}};
