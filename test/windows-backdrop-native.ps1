@@ -1,5 +1,5 @@
 # CI fixture only; excluded from the installed application. Standard queries are
-# read-only. The one explicit experiment uses fixed blur parameters on a HWND
+# read-only. Explicit experiments use fixed blur/acrylic parameters on a HWND
 # owned by the fixture process, never a caller-selected compositor policy.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -34,7 +34,12 @@ public static class OrbBackdropProbe {
     return IntPtr.Size == 8 ? unchecked((uint)GetWindowLongPtr64(window, index).ToInt64()) : unchecked((uint)GetWindowLong32(window,index));
   }
   public static bool ExperimentAccentBlur(IntPtr window) {
-    ACCENT_POLICY accent = new ACCENT_POLICY { state=3, flags=2, color=0, animation=0 };
+    return ApplyFixedAccent(window, new ACCENT_POLICY { state=3, flags=2, color=0, animation=0 });
+  }
+  public static bool ExperimentAccentAcrylic(IntPtr window) {
+    return ApplyFixedAccent(window, new ACCENT_POLICY { state=4, flags=0, color=0x01ffffff, animation=0 });
+  }
+  private static bool ApplyFixedAccent(IntPtr window, ACCENT_POLICY accent) {
     IntPtr memory=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(ACCENT_POLICY)));
     try {
       Marshal.StructureToPtr(accent,memory,false);
@@ -78,9 +83,11 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {
     if ($null -eq $query -or $query -is [array] -or $query.label -isnot [string] -or $query.label.Length -gt 80) { throw 'Invalid query label.' }
     $label=$query.label
     if ($query.handleHex -isnot [string] -or $query.handleHex -notmatch '\A(?:0x)?[0-9a-fA-F]{1,16}\z') { throw 'Invalid fixture window handle.' }
-    $allowed=@('label','handleHex','experimentAccentBlur')
+    $allowed=@('label','handleHex','experimentAccentBlur','experimentAccentAcrylic')
     foreach ($property in $query.PSObject.Properties.Name) { if ($allowed -notcontains $property) { throw 'Unknown query property.' } }
     if ($null -ne $query.experimentAccentBlur -and $query.experimentAccentBlur -isnot [bool]) { throw 'Invalid experiment flag.' }
+    if ($null -ne $query.experimentAccentAcrylic -and $query.experimentAccentAcrylic -isnot [bool]) { throw 'Invalid experiment flag.' }
+    if ($query.experimentAccentBlur -eq $true -and $query.experimentAccentAcrylic -eq $true) { throw 'Accent experiments are mutually exclusive.' }
     $value=[Convert]::ToUInt64(($query.handleHex -replace '^0x',''),16)
     if ($value -gt [long]::MaxValue) { throw 'Invalid fixture handle range.' }
     $window=[IntPtr]::new([long]$value)
@@ -93,6 +100,11 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {
     if ($query.experimentAccentBlur -eq $true) {
       try { $experiment=@{requested=$true;state=3;flags=2;result=[OrbBackdropProbe]::ExperimentAccentBlur($window)} }
       catch { $experiment=@{requested=$true;state=3;flags=2;result=$false;error=$_.Exception.Message} }
+    }
+    $acrylicExperiment=$null
+    if ($query.experimentAccentAcrylic -eq $true) {
+      try { $acrylicExperiment=@{requested=$true;state=4;flags=0;color='0x01ffffff';result=[OrbBackdropProbe]::ExperimentAccentAcrylic($window)} }
+      catch { $acrylicExperiment=@{requested=$true;state=4;flags=0;color='0x01ffffff';result=$false;error=$_.Exception.Message} }
     }
     $windowRect=New-Object OrbBackdropProbe+RECT
     $clientRect=New-Object OrbBackdropProbe+RECT
@@ -136,6 +148,7 @@ while ($null -ne ($line=[Console]::In.ReadLine())) {
         layered=(($extendedStyle -band 0x00080000) -ne 0);noRedirectionBitmap=(($extendedStyle -band 0x00200000) -ne 0)
         noActivate=(($extendedStyle -band 0x08000000) -ne 0);topmost=(($extendedStyle -band 8) -ne 0)}
       experimentAccentBlur=$experiment
+      experimentAccentAcrylic=$acrylicExperiment
     }
   } catch { Write-Record @{kind='window';label=$label;error=$_.Exception.Message} }
 }

@@ -62,13 +62,15 @@ if(!process.versions.electron){
     scope:'Inactive, always-on-top shaped HWND over a separate synthetic background window',
     limitation:'A requested acrylic API call is not proof of blur; desktop pixels, focus and background response are checked separately.',
     captureLimitation:'Screen capture or VM policies may affect system materials. Negative evidence here does not establish appearance on an uncaptured physical desktop.',
+    layeredControlLimitation:'SetOpacity(1) requests WS_EX_LAYERED but does not remove WS_EX_NOREDIRECTIONBITMAP or prove Chromium changed its compositor backend; native style bits are recorded.',
     os:{platform:process.platform,release:os.release()},versions:{electron:process.versions.electron,chrome:process.versions.chrome},
     windows:[],captures:[],evidence:[],controls:[]
   };
   app.setPath('userData',process.env.GPT_ORB_BACKDROP_PROFILE);
   nativeTheme.themeSource='dark';
-  const timer=setTimeout(()=>finish('unverified','The fixture exceeded its bounded desktop deadline.'),
-    Math.min(46000,Number(process.env.GPT_ORB_BACKDROP_TIMEOUT_MS)||46000));
+  const desktopBudget=Math.min(46000,Number(process.env.GPT_ORB_BACKDROP_TIMEOUT_MS)||46000);
+  const desktopDeadline=Date.now()+desktopBudget;
+  const timer=setTimeout(()=>finish('unverified','The fixture exceeded its bounded desktop deadline.'),desktopBudget);
   let background,orb,controller,nativeProbe,finished=false;
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   function finish(status,reason,error){
@@ -108,11 +110,12 @@ if(!process.versions.electron){
       }catch(error){fail(error);}
     });
     const api={
-      query:async(window,label,experimentAccentBlur=false)=>{
+      query:async(window,label,{experimentAccentBlur=false,experimentAccentAcrylic=false}={})=>{
         const key=`${++sequence}-${label}`,handle=window.getNativeWindowHandle();
         const handleHex=(handle.length===8?handle.readBigUInt64LE():BigInt(handle.readUInt32LE())).toString(16);
         const response=pending(key);
-        child.stdin.write(JSON.stringify({label:key,handleHex,...(experimentAccentBlur?{experimentAccentBlur:true}:{})})+'\n');
+        child.stdin.write(JSON.stringify({label:key,handleHex,...(experimentAccentBlur?{experimentAccentBlur:true}:{}),
+          ...(experimentAccentAcrylic?{experimentAccentAcrylic:true}:{})})+'\n');
         return response;
       },
       stop(){stopped=true;child.stdin.end();child.kill();}
@@ -220,7 +223,7 @@ if(!process.versions.electron){
     window.webContents.on('console-message',details=>{if(details.level==='error')finish('error','Fixture renderer reported an error.',new Error(details.message));});
   }
 
-  async function makeControl({panel=false,layered=false,shape=false,solid=false}={}){
+  async function makeControl({panel=false,layered=false,legacyLayered=false,shape=false,solid=false}={}){
     const center={x:background.getBounds().x+240,y:background.getBounds().y+170};
     const width=panel?340:EXPANDED_SIZE,height=panel?240:EXPANDED_SIZE;
     const window=new BrowserWindow({x:center.x-width/2,y:center.y-height/2,width,height,show:false,frame:false,
@@ -232,6 +235,14 @@ if(!process.versions.electron){
     if(shape)window.setShape(circleShape(EXPANDED_SIZE));
     let material={orbNativeBackdrop:false,orbBackdropStatus:'none'};
     if(!layered&&!solid)material=applyOrbMaterial(window,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    else{
+      // The constructor's default is not DWMSBT_NONE; query must confirm value 1.
+      window.setBackgroundMaterial('none');
+      window.setBackgroundColor(solid?'#171b22':'#00000000');
+    }
+    // Electron 44 transparent:true uses DirectComposition without WS_EX_LAYERED.
+    // Only this explicit test control requests the legacy layered HWND path.
+    if(legacyLayered)window.setOpacity(1);
     window.setAlwaysOnTop(true,'floating');
     const fill=solid?'#171b22':'rgba(18,22,27,.16)';
     const radius=shape||layered?'50%':panel?'8px':'0';
@@ -240,18 +251,27 @@ if(!process.versions.electron){
     return{window,material};
   }
 
-  async function runControl(name,view,baseA,baseB,{active=false,shape=false,forceShape=false,experimentAccentBlur=false,material}={}){
+  async function runControl(name,view,baseA,baseB,{active=false,shape=false,forceShape=false,experimentAccentBlur=false,
+    experimentAccentAcrylic=false,requireNone=false,requireLayered=false,material}={}){
     view.showInactive();
     (active?view:background).focus();
     await pause(300);
     const before=await nativeProbe.query(view,`${name}-before`);
+    if((requireNone&&(before.systemBackdrop?.hresult!==0||before.systemBackdrop?.value!==1))||
+       (requireLayered&&before.styles?.layered!==true)){
+      const result={name,status:'not-measured',reason:'The required native NONE/layered control state was not established.',nativeBefore:before};
+      report.controls.push(result);console.log(`Native backdrop control: ${JSON.stringify(result)}`);
+      view.hide();background.focus();return result;
+    }
     if(forceShape)view.setShape(circleShape(view.getBounds().width));
-    const native=forceShape||experimentAccentBlur?await nativeProbe.query(view,`${name}-after`,experimentAccentBlur):before;
+    const native=forceShape||experimentAccentBlur||experimentAccentAcrylic?await nativeProbe.query(view,`${name}-after`,
+      {experimentAccentBlur,experimentAccentAcrylic}):before;
     await pause(180);
     await paint(0,active?view:background);const a=await capture(`${name}-a`,view,{logImage:true});
     await paint(1,active?view:background);const b=await capture(`${name}-b`,view,{logImage:true});
     const metrics=compare(view.getBounds().width===COMPACT_SIZE?COMPACT_SIZE:EXPANDED_SIZE,a,b,baseA,baseB,{active,expectShape:shape});
-    const result={name,active,shape,forceShape,experimental:experimentAccentBlur,material,nativeBefore:before,nativeAfter:native,metrics};
+    const result={name,active,shape,forceShape,experimental:experimentAccentBlur||experimentAccentAcrylic,requireNone,requireLayered,
+      material,nativeBefore:before,nativeAfter:native,metrics};
     report.controls.push(result);
     console.log(`Native backdrop control: ${JSON.stringify(result)}`);
     view.hide();background.focus();
@@ -312,15 +332,28 @@ if(!process.versions.electron){
     await runControl('panel-acrylic-inactive',panel.window,baselineA,baselineB,{material:panel.material});
     panel.window.destroy();
     const solid=await makeControl({shape:true,solid:true});
-    await runControl('shape-none-solid',solid.window,baselineA,baselineB,{shape:true,forceShape:true,material:solid.material});
+    await runControl('shape-none-solid',solid.window,baselineA,baselineB,{shape:true,forceShape:true,requireNone:true,material:solid.material});
     solid.window.destroy();
     const layered=await makeControl({layered:true});
-    await runControl('layered-css-alpha',layered.window,baselineA,baselineB,{shape:true,material:layered.material});
+    await runControl('transparent-dcomp-css-alpha',layered.window,baselineA,baselineB,{shape:true,requireNone:true,material:layered.material});
+    layered.window.destroy();
+    const legacy=await makeControl({layered:true,legacyLayered:true,shape:true});
+    await runControl('legacy-layered-css-alpha',legacy.window,baselineA,baselineB,
+      {shape:true,forceShape:true,requireNone:true,requireLayered:true,material:legacy.material});
     // This optional fixed SWCA experiment changes only this synthetic HWND.
     // Its return value is recorded, never treated as evidence of visible blur.
-    await runControl('experimental-layered-accent-blur',layered.window,baselineA,baselineB,
-      {shape:true,forceShape:true,experimentAccentBlur:true,material:layered.material});
-    layered.window.destroy();
+    await runControl('experimental-layered-accent-blur',legacy.window,baselineA,baselineB,
+      {shape:true,forceShape:true,requireNone:true,requireLayered:true,experimentAccentBlur:true,material:legacy.material});
+    legacy.window.destroy();
+    if(desktopDeadline-Date.now()>5500){
+      const acrylic=await makeControl({layered:true,legacyLayered:true,shape:true});
+      await runControl('experimental-layered-accent-acrylic',acrylic.window,baselineA,baselineB,
+        {shape:true,forceShape:true,requireNone:true,requireLayered:true,experimentAccentAcrylic:true,material:acrylic.material});
+      acrylic.window.destroy();
+    }else{
+      const result={name:'experimental-layered-accent-acrylic',status:'not-measured',reason:'Insufficient remaining desktop diagnostic budget.'};
+      report.controls.push(result);console.log(`Native backdrop control: ${JSON.stringify(result)}`);
+    }
     const observed=appearance.orbNativeBackdrop&&report.dwm.hresult===0&&report.dwm.enabled===true&&report.evidence.every(item=>item.result==='diffused-background-response-observed');
     finish(observed?'observed-on-ci':'unverified',observed?
       'Synthetic background color response and selective stripe suppression were observed while the orb remained inactive on this CI desktop.':
