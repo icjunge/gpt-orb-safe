@@ -9,6 +9,7 @@
   let collapseTimer = null;
   let requestedExpanded = false;
   let expandRevision = 0;
+  orb.dataset.expanded = 'false';
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const nativeMode = () => (state.usageSource || state.settings?.usageSource || (state.codex || state.snapshot?.source === 'codex-cli' ? 'codex-cli' : 'browser')) === 'codex-cli';
   const snapshot = () => state.snapshot && ((state.snapshot.source === 'codex-cli') === nativeMode()) ? state.snapshot : null;
@@ -74,7 +75,9 @@
     requestedExpanded = expanded;
     const revision = ++expandRevision;
     action('orbExpand', { expanded }).then(result => {
-      if (revision === expandRevision && result?.ok === false) requestedExpanded = null;
+      if (revision !== expandRevision) return;
+      if (result?.ok !== true) { requestedExpanded = null; return; }
+      if (typeof result.expanded === 'boolean') orb.dataset.expanded = String(result.expanded);
     });
   }
   function settleHover() {
@@ -103,12 +106,22 @@
     // resize a newer gesture. Releasing capture can synchronously fire lostcapture.
     const result = await action('dragEnd', { cancelled });
     if (dragging !== gesture) return;
+    // The release is newer than every hover request made before the press.
+    // A delayed hover reply must not repaint an obsolete native hit region.
+    ++expandRevision;
+    if (result?.ok === true && typeof result.expanded === 'boolean') {
+      requestedExpanded = result.expanded;
+      orb.dataset.expanded = String(result.expanded);
+    }
     dragging = null;
     if (!cancelled && result?.ok === true && result.moved === false) action('togglePanel');
     settleHover();
   }
   orb.addEventListener('pointerdown', event => {
     if (event.button !== 0 || dragging) return;
+    // Mouse pressing should not activate the button's default focus behavior.
+    // Tab focus and keyboard activation remain available through their handlers.
+    event.preventDefault();
     clearCollapse();
     const gesture = dragging = { pointerId: event.pointerId, ending: false };
     try { orb.setPointerCapture(event.pointerId); } catch { dragging = null; settleHover(); return; }

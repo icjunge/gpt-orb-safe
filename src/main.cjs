@@ -12,7 +12,7 @@ const {validSettings,allowedSender} = require('./security.cjs');
 const {CodexProvider} = require('./codex-provider.cjs');
 const {discoverCodex} = require('./codex-discovery.cjs');
 const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial} = require('./window-material.cjs');
-const {COMPACT_SIZE,createOrbController} = require('./orb-window.cjs');
+const {COMPACT_SIZE,HOST_SIZE,HOST_INSET,createOrbController} = require('./orb-window.cjs');
 app.setName('GPT Usage Orb Safe');
 app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 // App-local material scheme; does not change the Windows system theme.
@@ -54,6 +54,10 @@ function clampPosition(position,width=COMPACT_SIZE,height=COMPACT_SIZE){
   const a=display.workArea;return{x:Math.round(Math.max(a.x,Math.min(position?.x??a.x+a.width-width-24,a.x+a.width-width))),
     y:Math.round(Math.max(a.y,Math.min(position?.y??a.y+a.height/2-height/2,a.y+a.height-height)))};
 }
+function clampOrbHost(position){
+  const compact=clampPosition(position?{x:position.x+HOST_INSET,y:position.y+HOST_INSET}:undefined);
+  return{x:compact.x-HOST_INSET,y:compact.y-HOST_INSET};
+}
 function moveOrbDrag(){
   if(!drag)return false;
   const cursor=screen.getCursorScreenPoint(),dx=cursor.x-drag.cursor.x,dy=cursor.y-drag.cursor.y;
@@ -61,13 +65,14 @@ function moveOrbDrag(){
   // pointer screen coordinates can jump after hover resize or across DPI scales.
   if(!drag.moved&&Math.hypot(dx,dy)<=4)return false;
   drag.moved=true;
-  const point=clampPosition({x:drag.bounds.x+dx,y:drag.bounds.y+dy},drag.bounds.width,drag.bounds.height);
+  const point=clampOrbHost({x:drag.bounds.x+dx,y:drag.bounds.y+dy});
   // A pointer can cross the threshold while the work-area clamp prevents any
   // window travel, or return to its press position after a real drag. Keep the
   // last requested DIP position separate from the gesture's moved verdict.
   drag.position=point;
   const before=orbWindow.getBounds();
-  if(point.x!==before.x||point.y!==before.y){orbWindow.setPosition(point.x,point.y);anchorPanel();}
+  orbController.moveDrag(point);
+  if(point.x!==before.x||point.y!==before.y)anchorPanel();
   return true;
 }
 function anchorPanel(){if(!panelWindow||panelWindow.isDestroyed()||!orbWindow)return;
@@ -113,11 +118,12 @@ function createWindows(){
       webSecurity:true,webviewTag:false,backgroundThrottling:true,spellcheck:false}};
   // A transparent, shaped host avoids DWM's rectangular Acrylic fallback.
   // This choice is independent of GPU feature status and never delays startup.
-  orbWindow=new BrowserWindow({...common,width:COMPACT_SIZE,height:COMPACT_SIZE,...clampPosition(savedPosition),
+  const compactPosition=clampPosition(savedPosition);
+  orbWindow=new BrowserWindow({...common,width:HOST_SIZE,height:HOST_SIZE,x:compactPosition.x-HOST_INSET,y:compactPosition.y-HOST_INSET,
     thickFrame:false,roundedCorners:false,hasShadow:false});
   orbController=createOrbController(orbWindow,screen,{platform:process.platform});
   // Crossing displays can change HWND DPI even though the DIP size is unchanged.
-  orbWindow.on('move',()=>orbController.refreshShape());
+  for(const event of['move','resize'])orbWindow.on(event,()=>orbController.reconcileNativeBounds());
   const nativePanel=supportsAcrylic(process.platform,os.release());
   panelWindow=new BrowserWindow({...common,width:340,height:panelHeight,hasShadow:true,roundedCorners:true,
     transparent:!nativePanel});
@@ -230,7 +236,7 @@ function registerIpc(){
       case'setSettings':return applySettings(payload);
       case'dragStart':{
         if(event.sender!==orbWindow.webContents||drag)return{ok:false};
-        orbController.beginDrag();const bounds=orbWindow.getBounds();
+        const bounds=orbController.beginDrag();
         drag={cursor:screen.getCursorScreenPoint(),bounds,position:{x:bounds.x,y:bounds.y},moved:false};return{ok:true};}
       case'dragMove':
         if(event.sender!==orbWindow.webContents||!drag)return{ok:false};
@@ -244,9 +250,10 @@ function registerIpc(){
         // never adopts a later cursor position outside this gesture.
         if(!payload?.cancelled)moveOrbDrag();
         const moved=drag.moved,positionChanged=moved&&(drag.position.x!==drag.bounds.x||drag.position.y!==drag.bounds.y);
-        drag=null;orbController.endDrag({moved:positionChanged});
+        const position=drag.position;drag=null;
+        const result=orbController.endDrag({position});
         if(positionChanged){savedPosition=orbController.compactPosition();clearTimeout(saveTimer);saveTimer=setTimeout(saveSettings,250);}
-        return{ok:true,moved};}
+        return{ok:true,moved,expanded:result.expanded};}
       case'quit':app.quit();break;
       default:return{ok:false,error:'未知操作'};
     }return{ok:true};}catch{return{ok:false,error:'操作未完成，请稍后重试。'};}

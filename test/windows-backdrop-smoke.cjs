@@ -55,7 +55,7 @@ if(!process.versions.electron){
   }
 }else{
   const {app,BrowserWindow,desktopCapturer,ipcMain,nativeTheme,screen,session}=require('electron');
-  const {COMPACT_SIZE,EXPANDED_SIZE,circleShape,createOrbController}=require('../src/orb-window.cjs');
+  const {COMPACT_SIZE,EXPANDED_SIZE,HOST_SIZE,HOST_INSET,circleShape,createOrbController}=require('../src/orb-window.cjs');
   const {applyOrbMaterial}=require('../src/window-material.cjs');
   const report={
     schema:3,status:'unverified',environment:'Windows CI virtual machine, not the user’s hardware',
@@ -182,7 +182,7 @@ if(!process.versions.electron){
     const {orbBounds,backgroundBounds}=image.state;
     const center={x:orbBounds.x-backgroundBounds.x+orbBounds.width/2,y:orbBounds.y-backgroundBounds.y+orbBounds.height/2};
     // Sample a patch inside the circle's upper arc, clear of its border and
-    // centered percentage. Scaled offsets work for both 48px and 56px windows.
+    // centered percentage. Both visual sizes share one fixed 56 DIP host.
     const radius=size/2;
     const rows=[...new Set([-.76,-.72,-.68].map(ratio=>Math.round(radius*ratio)))];
     const half=Math.max(3,Math.floor(radius*.38));
@@ -289,7 +289,7 @@ if(!process.versions.electron){
     const position={x:area.x+20,y:area.y+20};
     background=new BrowserWindow({...position,width:480,height:360,show:false,frame:false,resizable:false,backgroundColor:'#242424',
       webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
-    orb=new BrowserWindow({x:position.x+240-COMPACT_SIZE/2,y:position.y+170-COMPACT_SIZE/2,width:COMPACT_SIZE,height:COMPACT_SIZE,
+    orb=new BrowserWindow({x:position.x+240-HOST_SIZE/2,y:position.y+170-HOST_SIZE/2,width:HOST_SIZE,height:HOST_SIZE,
       show:false,frame:false,transparent:true,backgroundColor:'#00000000',thickFrame:false,roundedCorners:false,
       resizable:false,maximizable:false,minimizable:false,fullscreenable:false,hasShadow:false,skipTaskbar:true,
       webPreferences:{preload:path.join(__dirname,'render-preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
@@ -298,7 +298,8 @@ if(!process.versions.electron){
     orb.setOpacity(1);
     report.material=appearance;
     report.windows={transparent:true,alwaysOnTop:true,showMethod:'showInactive',setOpacityCalled:true,opacity:1,
-      compactShapeRectangles:circleShape(COMPACT_SIZE).length,expandedShapeRectangles:circleShape(EXPANDED_SIZE).length};
+      hostSize:HOST_SIZE,compactInset:HOST_INSET,
+      compactShapeRectangles:circleShape(COMPACT_SIZE,HOST_INSET).length,expandedShapeRectangles:circleShape(EXPANDED_SIZE).length};
     orb.setAlwaysOnTop(true,'floating');
     const now=Date.now();
     const state={status:'ready',usageSource:'codex-cli',appearance,settings:{usageSource:'codex-cli',glassTint:16},
@@ -324,11 +325,15 @@ if(!process.versions.electron){
     report.showInactivePreservedFocus=focusBefore&&background.isFocused()&&!orb.isFocused();
     report.productionCompactNative=await nativeProbe.query(orb,'production-compact');
     const compactA=await capture('compact-a',orb,{logImage:true});
-    controller.request({expanded:true});await pause(450);
+    controller.request({expanded:true});
+    await orb.webContents.executeJavaScript("document.getElementById('orb').dataset.expanded='true'");
+    await pause(450);
     report.productionExpandedNative=await nativeProbe.query(orb,'production-expanded');
     const expandedA=await capture('expanded-a',orb,{logImage:true});
     await paint(1);const expandedB=await capture('expanded-b',orb,{logImage:true});
-    controller.request({expanded:false});await pause(450);const compactB=await capture('compact-b',orb,{logImage:true});
+    controller.request({expanded:false});
+    await orb.webContents.executeJavaScript("document.getElementById('orb').dataset.expanded='false'");
+    await pause(450);const compactB=await capture('compact-b',orb,{logImage:true});
     orb.hide();await pause(350);const baselineB=await capture('background-b');
     report.evidence=[
       {...compare(COMPACT_SIZE,compactA,compactB,baselineA,baselineB),nativeCircleObserved:nativeCircleObserved(report.productionCompactNative),

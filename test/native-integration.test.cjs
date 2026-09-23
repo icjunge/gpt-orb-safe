@@ -15,7 +15,7 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false} = {}) {
+async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false, workArea={x:0,y:0,width:1920,height:1080}} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
   const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[]};
   const userData = '/virtual-orb/user-data';
@@ -58,7 +58,9 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     setShape(value){(this.shapes||=[]).push(clone(value));}
     showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
     isVisible(){return this.visible;}
-    getBounds(){return{...this.bounds};} setBounds(bounds){this.bounds={...this.bounds,...bounds};this.boundUpdates=(this.boundUpdates||0)+1;}
+    getBounds(){return{...this.bounds};} setBounds(bounds){const before=this.bounds;this.bounds={...this.bounds,...bounds};this.boundUpdates=(this.boundUpdates||0)+1;
+      if(before.x!==this.bounds.x||before.y!==this.bounds.y)this.emit('move');
+      if(before.width!==this.bounds.width||before.height!==this.bounds.height)this.emit('resize');}
     setPosition(x,y){Object.assign(this.bounds,{x,y});this.emit('move');}
   }
   class Tray extends EventEmitter {
@@ -93,9 +95,9 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     app,BrowserWindow:Window,Tray,nativeTheme,
     ipcMain:{handle:(channel, handler)=>handlers.set(channel,handler)},
     screen:Object.assign(new EventEmitter(),{
-      getPrimaryDisplay:()=>({workArea:{x:0,y:0,width:1920,height:1080}}),
-      getDisplayNearestPoint:()=>({workArea:{x:0,y:0,width:1920,height:1080}}),
-      getDisplayMatching:()=>({workArea:{x:0,y:0,width:1920,height:1080}}),getCursorScreenPoint:()=>({x:0,y:0})
+      getPrimaryDisplay:()=>({workArea}),
+      getDisplayNearestPoint:()=>({workArea}),
+      getDisplayMatching:()=>({workArea}),getCursorScreenPoint:()=>({x:0,y:0})
     }),
     Menu:{setApplicationMenu(){},buildFromTemplate:items=>({items,popup(){}})},
     nativeImage:{createFromPath:()=>({resize:()=>({})})},
@@ -145,8 +147,8 @@ test('orb remains a small transparent alpha circle while panel Acrylic and acces
   assert.equal(orb.options.transparent,true);
   assert.equal(orb.options.thickFrame,false);
   assert.equal(orb.options.roundedCorners,false);
-  assert.equal(orb.options.width,48);
-  assert.equal(orb.options.height,48);
+  assert.equal(orb.options.width,56);
+  assert.equal(orb.options.height,56);
   assert.equal(orb.material,'none');
   assert.equal(orb.backgroundColor,'#00000000');
   assert.equal(orb.shapes.length,1);
@@ -196,15 +198,15 @@ test('orb hover accepts only a boolean from its exact main frame and cannot move
   }
   assert.deepEqual(await h.action('orbExpand',{expanded:true},event),{ok:true,expanded:true});
   assert.equal(orb.bounds.width,56);assert.equal(orb.bounds.height,56);
-  assert.equal(orb.bounds.x+28,initial.x+24);assert.equal(orb.bounds.y+28,initial.y+24);
+  assert.deepEqual(clone(orb.bounds),initial);assert.equal(orb.boundUpdates,undefined);
   assert.deepEqual(clone(panel.bounds),panelBounds);
   assert.equal(orb.focusCalls,undefined);assert.equal(panel.focusCalls,undefined);
   await h.action('orbExpand',{expanded:false},event);
   assert.equal(orb.bounds.x,initial.x);assert.equal(orb.bounds.y,initial.y);
-  assert.equal(orb.bounds.width,48);assert.equal(orb.bounds.height,48);
+  assert.equal(orb.bounds.width,56);assert.equal(orb.bounds.height,56);assert.equal(orb.boundUpdates,undefined);
 });
 
-test('drag keeps the expanded orb inside a display, then restores pending compact size and saves its compact position',async()=>{
+test('drag clamps the visible compact orb, applies pending appearance and saves its logical compact position',async()=>{
   const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
   await h.action('orbExpand',{expanded:true},event);
   h.screen.getCursorScreenPoint=()=>({x:500,y:500});
@@ -213,11 +215,11 @@ test('drag keeps the expanded orb inside a display, then restores pending compac
   assert.equal(orb.bounds.width,56);
   h.screen.getCursorScreenPoint=()=>({x:4000,y:4000});
   await h.action('dragMove',{x:-9999,y:-9999},event);
-  assert.equal(orb.bounds.x,1864);assert.equal(orb.bounds.y,1024);
+  assert.equal(orb.bounds.x,1868);assert.equal(orb.bounds.y,1028);
   await h.action('dragEnd',undefined,event);
-  assert.equal(orb.bounds.width,48);assert.equal(orb.bounds.x,1868);assert.equal(orb.bounds.y,1028);
+  assert.equal(orb.bounds.width,56);assert.equal(orb.bounds.x,1868);assert.equal(orb.bounds.y,1028);
   for(const timer of h.timers.values())if(timer.delay===250)timer.callback();
-  assert.deepEqual(h.saved().position,{x:1868,y:1028});
+  assert.deepEqual(h.saved().position,{x:1872,y:1032});
   const shapes=orb.shapes.length;
   h.screen.emit('display-metrics-changed');
   assert.equal(orb.shapes.length,shapes+1,'rebuild the native region even if DIP dimensions do not change');
@@ -240,11 +242,47 @@ test('stationary press and native DIP jitter never move, save or adopt hover bou
     // Native resize can report its bounds late; no actual cursor drag occurred.
     orb.bounds.x+=4;orb.bounds.y+=4;
     await h.action('orbExpand',{expanded:false},event);
-    assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:false});
+    assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:false,expanded:false});
     assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},compact);
     h.screen.getCursorScreenPoint=()=>({x:500,y:500});
   }
   assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false);
+});
+
+test('full main flow never writes geometry for stationary presses or one DIP native rounding, and repairs later real offsets',async()=>{
+  const position={x:400,y:300},h=await launch({preferences:{position}}),[orb]=h.windows;
+  const event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame},initial={x:396,y:296};
+  h.screen.getCursorScreenPoint=()=>({x:424,y:324});
+  orb.bounds.x+=1;orb.bounds.y+=1;
+  for(let count=0;count<20;count++){
+    await h.action('orbExpand',{expanded:true},event);await h.action('dragStart',undefined,event);
+    await h.action('dragMove',undefined,event);await h.action('dragEnd',{cancelled:false},event);
+    await h.action('orbExpand',{expanded:false},event);
+  }
+  assert.equal(orb.boundUpdates,undefined,'no native resize/reposition for hover/down/up, including fractional DPI feedback');
+  assert.deepEqual(h.saved().position,position);
+  for(let count=0;count<20;count++){
+    await h.action('dragStart',undefined,event);await h.action('dragEnd',{cancelled:false},event);
+    orb.bounds.x=initial.x+4;orb.bounds.y=initial.y+4;orb.emit('move');
+    assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},initial,'a late native move is repaired after release');
+  }
+  assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false);
+  assert.deepEqual(h.saved().position,position,'late native reports cannot become saved user positions');
+});
+
+test('full main drag commits its trusted cursor target even when the compositor reports a different release position',async()=>{
+  const h=await launch({preferences:{position:{x:400,y:300}}}),[orb]=h.windows;
+  const event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  let cursor={x:424,y:324};h.screen.getCursorScreenPoint=()=>cursor;
+  await h.action('dragStart',undefined,event);cursor={x:484,y:364};await h.action('dragMove',undefined,event);
+  orb.bounds.x+=4;orb.bounds.y+=4;
+  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true,expanded:false});
+  assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:456,y:336});
+  for(const timer of h.timers.values())if(timer.delay===250)timer.callback();
+  assert.deepEqual(h.saved().position,{x:460,y:340});
+  orb.bounds.x+=4;orb.bounds.y+=4;orb.emit('move');
+  assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:456,y:336},'late native movement is restored after a completed real drag');
+  assert.deepEqual(h.saved().position,{x:460,y:340},'post-release compositor reports never overwrite the logical saved target');
 });
 
 test('outward drags clamped at every corner never shift or save the compact anchor',async()=>{
@@ -258,9 +296,9 @@ test('outward drags clamped at every corner never shift or save the compact anch
       cursor={x:cursor.x+(position.x?28:-28),y:cursor.y+(position.y?28:-28)};
       assert.deepEqual(await h.action('dragMove',undefined,event),{ok:true,moved:true});
       assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},press);
-      assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true},'outward drag must not also click');
+      assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true,expanded:true},'outward drag must not also click');
       await h.action('orbExpand',{expanded:false},event);
-      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},position);
+      assert.deepEqual({x:orb.bounds.x+4,y:orb.bounds.y+4},position);
       assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false,'clamped drag must not save a fake position');
     }
     assert.deepEqual(h.saved().position,position);
@@ -280,9 +318,9 @@ test('dragging away from a corner and returning to its press position preserves 
       assert.deepEqual(await h.action('dragMove',undefined,event),{ok:true,moved:true});
       assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:press.x+delta.x,y:press.y+delta.y});
       cursor=start;
-      assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true},'returning drag must not also click');
+      assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true,expanded:true},'returning drag must not also click');
       await h.action('orbExpand',{expanded:false},event);
-      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},position);
+      assert.deepEqual({x:orb.bounds.x+4,y:orb.bounds.y+4},position);
       assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false,'return to start must not save a shifted anchor');
     }
     assert.deepEqual(h.saved().position,position);
@@ -290,19 +328,19 @@ test('dragging away from a corner and returning to its press position preserves 
 });
 
 test('only native DIP travel beyond the threshold starts a drag, and duplicate starts cannot rebase it',async()=>{
-  const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
-  let cursor={x:-400,y:-200};h.screen.getCursorScreenPoint=()=>cursor;
+  const h=await launch({preferences:{position:{x:-600,y:-300}},workArea:{x:-1920,y:-500,width:1920,height:1080}}),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  let cursor={x:-580,y:-280};h.screen.getCursorScreenPoint=()=>cursor;
   h.screen.getDisplayNearestPoint=()=>({workArea:{x:-1920,y:-500,width:1920,height:1080}});
   h.screen.getDisplayMatching=h.screen.getDisplayNearestPoint;
-  orb.bounds.x=-600;orb.bounds.y=-300;h.screen.emit('display-metrics-changed');
+  h.screen.emit('display-metrics-changed');
   const initial={x:orb.bounds.x,y:orb.bounds.y};
   await h.action('dragStart',undefined,event);
-  cursor={x:-397,y:-197};
+  cursor={x:-577,y:-277};
   assert.deepEqual(await h.action('dragMove',undefined,event),{ok:true,moved:true});
   assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:initial.x+3,y:initial.y+3});
   assert.deepEqual(await h.action('dragStart',undefined,event),{ok:false});
-  cursor={x:-390,y:-185};
-  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true});
+  cursor={x:-570,y:-265};
+  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true,expanded:false});
   assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:initial.x+10,y:initial.y+15});
   assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:false},'one end per gesture');
 });
@@ -318,7 +356,7 @@ test('drag gestures reject foreign frames and malformed cancellation without con
     assert.equal((await h.action('dragEnd',payload,event)).ok,false);
     assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},initial);
   }
-  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:false});
+  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:false,expanded:false});
 });
 
 test('release samples missing pointermove but cancellation never follows a later outside cursor',async()=>{
@@ -328,7 +366,7 @@ test('release samples missing pointermove but cancellation never follows a later
     const initial={x:orb.bounds.x,y:orb.bounds.y};
     await h.action('dragStart',undefined,event);
     h.screen.getCursorScreenPoint=()=>({x:475,y:460});
-    assert.deepEqual(await h.action('dragEnd',{cancelled},event),{ok:true,moved:!cancelled});
+    assert.deepEqual(await h.action('dragEnd',{cancelled},event),{ok:true,moved:!cancelled,expanded:false});
     assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},cancelled?initial:{x:initial.x-25,y:initial.y-40});
   }
 });
@@ -422,13 +460,12 @@ test('content resizing stays on the panel display and clamps within its work are
 });
 
 test('anchoring restores the desired content height after a small display temporarily limits it',async()=>{
-  const h=await launch(),[orb,panel]=h.windows;
+  const h=await launch({preferences:{position:{x:704,y:404}}}),[orb,panel]=h.windows;
   h.screen.getDisplayMatching=()=>({workArea:{x:0,y:0,width:1280,height:300}});
   await h.action('panelResize',{height:660});
   assert.equal(panel.bounds.height,300);
   assert.equal(panel.bounds.y,0);
   h.screen.getDisplayMatching=()=>({workArea:{x:0,y:0,width:1920,height:1080}});
-  orb.setBounds({x:700,y:400,width:92,height:104});
   await h.action('togglePanel');
   assert.equal(panel.bounds.height,660);
   assert.equal(panel.bounds.width,340);

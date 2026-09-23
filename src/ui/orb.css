@@ -2,7 +2,8 @@
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;user-select:none}
 body{display:grid;place-items:center}
-.orb{position:relative;display:grid;place-items:center;isolation:isolate;width:100%;height:100%;padding:0;border:1px solid #ffffff70;border-radius:50%;background:rgba(18,22,27,.22);color:#fff;font:inherit;cursor:grab;touch-action:none;outline:none;box-shadow:inset 0 0 0 1px #09101b45,inset 0 3px 4px #ffffff14,inset 0 -3px 5px #08101835}
+.orb{position:relative;display:grid;place-items:center;isolation:isolate;width:48px;height:48px;padding:0;border:1px solid #ffffff70;border-radius:50%;background:rgba(18,22,27,.22);color:#fff;font:inherit;cursor:grab;touch-action:none;outline:none;box-shadow:inset 0 0 0 1px #09101b45,inset 0 3px 4px #ffffff14,inset 0 -3px 5px #08101835}
+.orb[data-expanded="true"]{width:56px;height:56px}
 .orb::before,.orb::after{content:"";position:absolute;pointer-events:none;border-radius:inherit}
 /* The rim stays inside the circular surface; the centre and outer corners stay transparent. */
 .orb::before{inset:0;padding:2.5px;background:linear-gradient(145deg,#fffffff0 0%,#ffffff70 20%,#ffffff16 40%,#07101d70 66%,#ffffff75 100%);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}
@@ -12,10 +13,8 @@ body{display:grid;place-items:center}
 .orb:focus-visible::after{border-color:#e6f2ff}
 .orb-value{position:relative;z-index:1;color:#fff;font-size:16px;font-weight:500;line-height:1;letter-spacing:-.45px;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #0008;pointer-events:none}
 .orb[data-wide-value="true"] .orb-value{font-size:12.5px;letter-spacing:-.55px}
-@media(min-width:52px){
-  .orb-value{font-size:18px}
-  .orb[data-wide-value="true"] .orb-value{font-size:14px}
-}
+.orb[data-expanded="true"] .orb-value{font-size:18px}
+.orb[data-expanded="true"][data-wide-value="true"] .orb-value{font-size:14px}
 body.reduced-transparency .orb{background:#171b22}
 body.high-contrast .orb{background:Canvas;color:CanvasText;border-color:CanvasText;box-shadow:none}
 body.high-contrast .orb::before,body.high-contrast .orb::after{display:none}

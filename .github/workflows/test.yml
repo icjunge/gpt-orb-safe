@@ -34,6 +34,9 @@ jobs:
       - name: Diagnose inactive native backdrop on the CI desktop
         if: runner.os == 'Windows'
         run: node test/windows-backdrop-smoke.cjs
+      - name: Verify stationary press and drag with real Windows mouse input
+        if: runner.os == 'Windows'
+        run: node test/windows-press-smoke.cjs
       - name: Keep native backdrop evidence, including unverified results
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

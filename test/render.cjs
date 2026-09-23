@@ -20,9 +20,10 @@ ipcMain.handle('test:action',async(event,action)=>{
     const view=views.find(view=>view.w.webContents===event.sender);
     if(view?.page!=='orb'||typeof action.payload?.expanded!=='boolean')return {ok:false};
     actions.push(action);
-    const size=action.payload.expanded?56:48;
-    await resize(view,size,size);
-    return {ok:true,expanded:action.payload.expanded};
+    view.requestedExpanded=action.payload.expanded;
+    if(view.gesture)return {ok:true,expanded:view.expanded,queued:true};
+    view.expanded=view.requestedExpanded;
+    return {ok:true,expanded:view.expanded};
   }
   if(action.name==='panelResize'){
     const view=views.find(view=>view.w.webContents===event.sender);
@@ -40,7 +41,10 @@ ipcMain.handle('test:action',async(event,action)=>{
     if(view.gesture&&['dragMove','dragEnd'].includes(action.name)){
       if(action.payload?.cancelled!==true&&Math.hypot(view.pointer.x-view.gesture.start.x,view.pointer.y-view.gesture.start.y)>4)view.gesture.moved=true;
       if(action.name==='dragMove'&&view.gesture.moved)view.nativeMoveCount++;
-      if(action.name==='dragEnd'){const moved=view.gesture.moved;view.gesture=null;return {ok:true,moved};}
+      if(action.name==='dragEnd'){
+        const moved=view.gesture.moved;view.gesture=null;view.expanded=view.requestedExpanded;
+        return {ok:true,moved,expanded:view.expanded};
+      }
     }
   }
   if(action.name==='setSettings'&&settingSaveDelay)await new Promise(resolve=>setTimeout(resolve,settingSaveDelay));return {ok:true};
@@ -51,7 +55,7 @@ async function make(page,width,height){
     webPreferences:{preload:path.join(__dirname,'render-preload.cjs'),offscreen:true,contextIsolation:true,sandbox:true}});
   const errors=[];
   w.webContents.on('console-message',(_e,level,message)=>{if(level>=3)errors.push(message);});
-  const view={w,errors,width,height,page,autoResize:true,pointer:{x:0,y:0},nativeMoveCount:0};views.push(view);
+  const view={w,errors,width,height,page,autoResize:true,pointer:{x:0,y:0},nativeMoveCount:0,expanded:false,requestedExpanded:false};views.push(view);
   await w.loadFile(path.join(__dirname,'../src/ui',page+'.html'));
   await w.webContents.executeJavaScript('document.fonts.ready.then(()=>true)');
   // Ozone headless can report a 1×1 viewport despite the requested native size.
@@ -63,24 +67,31 @@ async function make(page,width,height){
   await wait(300);return view;
 }
 async function resize(view,width,height){
+  if(view.page==='orb')assert.fail('The orb native host must never resize after creation.');
   view.w.setSize(width,height);view.width=width;view.height=height;
   if(view.emulated)await view.w.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
   await wait(100);
 }
 async function change(view,newState){state=newState;view.w.webContents.send('test:update',state);await wait(100);}
 async function run(view,code){return view.w.webContents.executeJavaScript(code);}
+async function orbSize(view){
+  equal(view.width,56,'native orb viewport remains 56 DIP');
+  equal(view.height,56,'native orb viewport remains 56 DIP');
+  return run(view,"(() => {const rect=document.getElementById('orb').getBoundingClientRect();if(rect.x+rect.width/2!==28||rect.y+rect.height/2!==28)throw Error('Orb visual centre moved');return rect.width;})()");
+}
 async function input(view,event,delay=40){if(event.type==='mouseMove')view.pointer={x:event.x,y:event.y};await view.w.webContents.sendInputEvent(event);await wait(delay);}
 async function shot(view,name){view.w.webContents.invalidate();await wait(250);const image=await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height});equal(image.getSize().width,view.width);equal(image.getSize().height,view.height);fs.writeFileSync(path.join(out,name),image.toPNG());}
 // Assert the captured compositor pixels, not merely a transparent CSS declaration.
 // This checks renderer alpha only; Windows DWM composition is a separate concern.
 async function orbAlpha(view,name){
   view.w.webContents.invalidate();await wait(100);
+  const size=await orbSize(view),inset=(56-size)/2;
   const png=(await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height})).toPNG();
-  const samples=await run(view,`new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const context=canvas.getContext('2d');context.drawImage(img,0,0);resolve([[0,0],[img.width-1,0],[0,img.height-1],[img.width-1,img.height-1],[Math.floor(img.width/2),8],[Math.floor(img.width/2),1]].map(([x,y])=>[...context.getImageData(x,y,1,1).data]));};img.onerror=()=>reject(new Error('Screenshot PNG could not be decoded'));img.src='data:image/png;base64,${png.toString('base64')}';})`);
+  const samples=await run(view,`new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const context=canvas.getContext('2d');context.drawImage(img,0,0);resolve([[0,0],[img.width-1,0],[0,img.height-1],[img.width-1,img.height-1],[Math.floor(img.width/2),${inset+8}],[Math.floor(img.width/2),${inset+1}]].map(([x,y])=>[...context.getImageData(x,y,1,1).data]));};img.onerror=()=>reject(new Error('Screenshot PNG could not be decoded'));img.src='data:image/png;base64,${png.toString('base64')}';})`);
   equal(samples.slice(0,4).every(pixel=>pixel[3]===0),true,`${name}: all four captured corners have zero alpha`);
   equal(samples[4][3]>0&&samples[4][3]<128,true,`${name}: the circular fill transmits the background`);
   equal(samples[5][3]>=samples[4][3]+25,true,`${name}: the glass edge is visibly stronger than the transmissive center`);
-  orbMeasurements.push({name,size:view.width,pixels:{corners:samples.slice(0,4),fill:samples[4],rim:samples[5]}});
+  orbMeasurements.push({name,size,hostSize:view.width,pixels:{corners:samples.slice(0,4),fill:samples[4],rim:samples[5]}});
   return samples;
 }
 // This fixture tests CSS light transmission, not native Windows backdrop support.
@@ -245,13 +256,13 @@ app.whenReady().then(async()=>{
   panelHeightLimit=480;await resize(panel,320,480);
   equal(await run(panel,"document.documentElement.scrollWidth<=innerWidth"),true);
   await change(panel,live);
-  const orb=await make('orb',48,48);
+  const orb=await make('orb',56,56);
   equal(await run(orb,"[...document.fonts].some(face=>face.family==='Inter'&&face.status==='loaded')&&document.fonts.check('500 20px Inter','100%')"),true,'bundled Inter loads before measuring the percentage');
   match(await run(orb,"getComputedStyle(document.getElementById('orb-value')).fontFamily"),/Inter/);
   equal(await run(orb,"document.getElementById('orb-value').textContent"),'64%');
   await shot(orb,'orb-demo.png');
   equal(await run(orb,"document.getElementById('orb').innerText.trim()==='64%'"),true,'resting orb shows only its percentage');
-  equal(await run(orb,"document.documentElement.scrollWidth===48&&document.documentElement.scrollHeight===48"),true,'compact orb uses a 48 DIP viewport without clipped scroll content');
+  equal(await run(orb,"document.documentElement.scrollWidth===56&&document.documentElement.scrollHeight===56"),true,'compact orb is drawn inside a fixed 56 DIP transparent host without scroll content');
   await shot(orb,'orb-compact.png');
   await orbAlpha(orb,'compact orb');
   match(await run(orb,"document.getElementById('orb').title"),/每周额度.*剩余 64%.*页面剩余/);
@@ -259,18 +270,18 @@ app.whenReady().then(async()=>{
   equal(await run(orb,"document.getElementById('orb').getAttribute('aria-label')"),await run(orb,"document.getElementById('orb').title.replace(/\\n/g,'；')"),'screen-reader description includes the same hover details');
   const interactionStart=actions.length;
   await input(orb,{type:'mouseMove',x:24,y:24},220);
-  equal(orb.width,56,'real pointer entry requests the expanded native viewport');
+  equal(await orbSize(orb),56,'real pointer entry expands the inner circle without resizing its native host');
   equal(orb.height,56);
   equal(await run(orb,"document.getElementById('orb').innerText.trim()==='64%'"),true,'hover keeps the circle percentage-only');
   await shot(orb,'orb-expanded.png');
   await orbAlpha(orb,'hover orb');
   await input(orb,{type:'mouseMove',x:0,y:0},50);
-  equal(orb.width,56,'brief pointer exit waits before shrinking');
+  equal(await orbSize(orb),56,'brief pointer exit waits before shrinking');
   await input(orb,{type:'mouseMove',x:28,y:28},220);
-  equal(orb.width,56,'pointer reentry cancels the pending shrink');
-  equal(actions.slice(interactionStart).filter(action=>action.name==='orbExpand'&&!action.payload.expanded).length,0,'reentry does not resize the native window twice');
+  equal(await orbSize(orb),56,'pointer reentry cancels the pending shrink');
+  equal(actions.slice(interactionStart).filter(action=>action.name==='orbExpand'&&!action.payload.expanded).length,0,'reentry does not repeat the native hit-region request');
   await input(orb,{type:'mouseMove',x:0,y:0},320);
-  equal(orb.width,48,'sustained pointer exit restores the small orb');
+  equal(await orbSize(orb),48,'sustained pointer exit restores the small orb');
   equal(actions.slice(interactionStart).some(action=>action.name==='togglePanel'),false,'hover never opens the panel');
   await input(orb,{type:'mouseMove',x:24,y:24},220);
   await input(orb,{type:'mouseMove',x:28,y:28});
@@ -303,18 +314,18 @@ app.whenReady().then(async()=>{
   equal(orb.nativeMoveCount,coordinateMoveCount,'browser screen-coordinate changes do not override the host cursor verdict');
   equal(actions.slice(coordinateChangeStart).filter(action=>action.name==='togglePanel').length,1,'native unmoved verdict remains a click despite changed browser screen coordinates');
   await input(orb,{type:'mouseMove',x:0,y:0},320);
-  equal(orb.width,48,'mouse-created focus does not keep a departed orb expanded');
+  equal(await orbSize(orb),48,'mouse-created focus does not keep a departed orb expanded');
   await input(orb,{type:'mouseMove',x:24,y:24},220);
   await input(orb,{type:'mouseMove',x:28,y:28});
   const dragStart=actions.length;
   await input(orb,{type:'mouseDown',button:'left',clickCount:1});
   await input(orb,{type:'mouseMove',x:44,y:28});
   await input(orb,{type:'mouseMove',x:0,y:0},220);
-  equal(orb.width,56,'pointer capture keeps the expanded window stable during dragging');
+  equal(await orbSize(orb),56,'pointer capture keeps the expanded inner circle stable during dragging');
   await input(orb,{type:'mouseUp',button:'left',clickCount:1},320);
   equal(actions.slice(dragStart).filter(action=>action.name==='togglePanel').length,0,'drag release never opens the panel');
   equal(actions.slice(dragStart).some(action=>action.name==='dragMove'),true,'movement passes through the drag action');
-  equal(orb.width,48,'drag release outside permits the compact viewport');
+  equal(await orbSize(orb),48,'drag release outside restores the compact inner circle');
   for(const ending of ['pointercancel','lostpointercapture']){
     await input(orb,{type:'mouseMove',x:24,y:24},220);
     await input(orb,{type:'mouseMove',x:28,y:28});
@@ -332,20 +343,20 @@ app.whenReady().then(async()=>{
     equal(actions.slice(cancellationStart).filter(action=>action.name==='togglePanel').length,0,`${ending} cannot turn an interrupted gesture into a click`);
     equal(actions.slice(cancellationStart).filter(action=>action.name==='dragEnd').length,1,`${ending} ends the gesture exactly once`);
     await input(orb,{type:'mouseMove',x:0,y:0},320);
-    equal(orb.width,48,`${ending} does not leave hover locked open`);
+    equal(await orbSize(orb),48,`${ending} does not leave hover locked open`);
   }
   await run(orb,"document.body.tabIndex=-1;document.body.focus();document.body.removeAttribute('tabindex')");
   await input(orb,{type:'keyDown',keyCode:'Tab'});
   await input(orb,{type:'keyUp',keyCode:'Tab'},220);
   equal(await run(orb,"document.activeElement.id"),'orb','keyboard navigation can reach the compact orb');
-  equal(orb.width,56,'keyboard-visible focus uses the same small enlargement as hover');
+  equal(await orbSize(orb),56,'keyboard-visible focus uses the same small enlargement as hover');
   const keyboardStart=actions.length;
   await input(orb,{type:'keyDown',keyCode:'Return'});
   await input(orb,{type:'keyDown',keyCode:'Return'});
   await input(orb,{type:'keyUp',keyCode:'Return'});
   equal(actions.slice(keyboardStart).filter(action=>action.name==='togglePanel').length,1,'held keyboard activation opens the panel only once');
   await run(orb,"document.getElementById('orb').blur()");await wait(320);
-  equal(orb.width,48,'blur restores compact size after keyboard use');
+  equal(await orbSize(orb),48,'blur restores compact size after keyboard use');
   await change(orb,stale);match(await run(orb,"document.getElementById('orb').title"),/上次记录/);
   equal(await run(orb,"document.getElementById('orb').innerText.trim()"),'64%','stale detail stays out of the visible circle');
   await change(orb,manual);match(await run(orb,"document.getElementById('orb').title"),/人工记录/);
@@ -474,12 +485,12 @@ app.whenReady().then(async()=>{
   equal(await run(orb,"getComputedStyle(document.getElementById('orb-value')).opacity"),'1','transparent fill keeps the percentage text opaque');
   for(const size of [48,56]){
     await input(orb,{type:'mouseMove',x:size===48?0:24,y:size===48?0:24},320);
-    equal(orb.width,size);
+    equal(await orbSize(orb),size);
     for(const usedPercent of [0,36,100,null]){
       await change(orb,{...alphaOrb,snapshot:usedPercent===null?null:{...native.snapshot,windows:[{...native.snapshot.windows[0],usedPercent}]}});
       const expected=usedPercent===null?'—':`${100-usedPercent}%`;
       equal(await run(orb,"document.getElementById('orb-value').textContent"),expected);
-      const measurement=await run(orb,"(() => {const value=document.getElementById('orb-value'),rect=value.getBoundingClientRect(),style=getComputedStyle(value);return {value:value.textContent,left:rect.left,right:innerWidth-rect.right,top:rect.top,bottom:innerHeight-rect.bottom,fontSize:style.fontSize};})()");
+      const measurement=await run(orb,"(() => {const value=document.getElementById('orb-value'),rect=value.getBoundingClientRect(),circle=document.getElementById('orb').getBoundingClientRect(),style=getComputedStyle(value);return {value:value.textContent,left:rect.left-circle.left,right:circle.right-rect.right,top:rect.top-circle.top,bottom:circle.bottom-rect.bottom,fontSize:style.fontSize};})()");
       equal(Math.min(measurement.left,measurement.right)>=6.5,true,`${expected} leaves at least 6.5 DIP on each side at ${size} DIP (${JSON.stringify(measurement)})`);
       orbMeasurements.push({size,...measurement});
       await shot(orb,`orb-${size===48?'compact':'hover'}-${usedPercent===null?'unknown':usedPercent===0?'full':usedPercent===100?'zero':'64'}.png`);

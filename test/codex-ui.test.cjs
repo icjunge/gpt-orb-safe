@@ -18,7 +18,7 @@ function fixture(overrides = {}) {
     ...overrides
   };
 }
-function harness(page, initial, actionImpl = async name => name === 'dragEnd' ? { ok: true, moved: false } : { ok: true }) {
+function harness(page, initial, actionImpl = async (name, payload) => name === 'dragEnd' ? { ok: true, moved: false } : name === 'orbExpand' ? { ok: true, expanded: payload.expanded } : { ok: true }) {
   const html = fs.readFileSync(path.join(__dirname, '../src/ui', `${page}.html`), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, '../src/ui', `${page}.js`), 'utf8');
   const nodes = new Map(), created = [], calls = [], intervals = [], timeouts = new Map();
@@ -419,6 +419,60 @@ test('orb hover expands once and delayed collapse is cancelled by re-entry or ke
   assert.deepEqual(h.calls.at(-1), { name: 'orbExpand', payload: { expanded: false } });
   orb.matching.delete(':focus-visible'); orb.dispatch('focus'); h.advance(200);
   assert.equal(h.calls.length, 2, 'mouse focus must not keep the orb enlarged');
+});
+
+test('orb draws only the latest acknowledged size in its fixed host', async () => {
+  const replies = [];
+  const h = harness('orb', fixture(), (name, payload) => name === 'orbExpand'
+    ? new Promise(resolve => replies.push({ expanded: payload.expanded, resolve })) : Promise.resolve({ ok: true }));
+  await flush(); const orb = h.node('orb');
+  assert.equal(orb.dataset.expanded, 'false');
+  orb.dispatch('pointerenter');
+  assert.equal(orb.dataset.expanded, 'false', 'drawing waits for the native hit-region acknowledgement');
+  orb.dispatch('pointerleave'); h.advance(160);
+  assert.deepEqual(replies.map(reply => reply.expanded), [true, false]);
+  replies[1].resolve({ ok: true, expanded: false }); await flush();
+  replies[0].resolve({ ok: true, expanded: true }); await flush();
+  assert.equal(orb.dataset.expanded, 'false', 'an older expansion cannot repaint a newer compact region');
+  orb.dispatch('pointerenter'); replies[2].resolve({ ok: true, expanded: true }); await flush();
+  assert.equal(orb.dataset.expanded, 'true');
+});
+
+test('a queued hover keeps its acknowledged region until release commits the final size', async () => {
+  let hoverReply;
+  const h = harness('orb', fixture(), name => name === 'orbExpand' ? new Promise(resolve => { hoverReply = resolve; })
+    : Promise.resolve(name === 'dragEnd' ? { ok: true, moved: false, expanded: true } : { ok: true }));
+  await flush(); const orb = h.node('orb'), pointer = { pointerId: 8, button: 0 };
+  orb.dispatch('pointerenter'); orb.dispatch('pointerdown', pointer);
+  hoverReply({ ok: true, expanded: false, queued: true }); await flush();
+  assert.equal(orb.dataset.expanded, 'false', 'queued hover does not paint outside the frozen compact hit region');
+  h.advance(10000); assert.equal(orb.dataset.expanded, 'false');
+  orb.dispatch('pointerup', pointer); await flush();
+  assert.equal(orb.dataset.expanded, 'true', 'release paints the final native region without resizing its host');
+  assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 1);
+});
+
+test('late hover acknowledgements cannot change the size after a stationary press has ended', async () => {
+  let hoverReply;
+  const h = harness('orb', fixture(), name => name === 'orbExpand' ? new Promise(resolve => { hoverReply = resolve; })
+    : Promise.resolve(name === 'dragEnd' ? { ok: true, moved: false, expanded: false } : { ok: true }));
+  await flush(); const orb = h.node('orb'), pointer = { pointerId: 9, button: 0 };
+  orb.dispatch('pointerenter'); orb.dispatch('pointerdown', pointer); orb.dispatch('pointerleave');
+  h.advance(10000); orb.dispatch('pointerup', pointer); await flush();
+  assert.equal(orb.dataset.expanded, 'false');
+  hoverReply({ ok: true, expanded: true }); await flush(); h.advance(500);
+  assert.equal(orb.dataset.expanded, 'false', 'release invalidates pre-press hover replies');
+  assert.equal(h.calls.filter(call => call.name === 'dragEnd').length, 1);
+});
+
+test('mouse pressing prevents default focus while keyboard navigation still expands', async () => {
+  const h = harness('orb', fixture()); await flush(); const orb = h.node('orb');
+  let prevented = 0;
+  orb.dispatch('pointerdown', { pointerId: 10, button: 0, preventDefault() { prevented++; } });
+  assert.equal(prevented, 1);
+  orb.dispatch('pointerup', { pointerId: 10 }); await flush();
+  orb.matching.add(':focus-visible'); orb.dispatch('focus'); await flush();
+  assert.equal(orb.dataset.expanded, 'true', 'keyboard focus retains its expansion path');
 });
 
 test('dragging freezes orb size and trusts the native end result rather than browser screen coordinates', async () => {
