@@ -1,4 +1,4 @@
-GPT 悬浮球 · 浏览器扩展 2.5.4（备用来源）
+GPT 悬浮球 · 浏览器扩展 2.6.0（备用来源）
 
 这份 ZIP 只包含浏览器扩展。2.3.0 起提供的官方 Codex CLI 定时读取在桌面主进程中，必须更新桌面；仅更新或重载扩展不能启用它。
 
@@ -18,7 +18,7 @@ GPT 悬浮球 · 浏览器扩展 2.5.4（备用来源）
 若仍需要浏览器备用模式：
 1. 桌面设置「数据来源」选择「浏览器扩展」。
 2. 已克隆仓库时先 git pull --ff-only，成功后 npm run extension:update（无需 npm ci）。命令只更新固定扩展目录，打印实际路径，不自动重载浏览器、不改变桌面版本。
-3. Chrome 打开 chrome://extensions，Edge 打开 edge://extensions。已有固定目录扩展点击「重新加载」，确认 2.5.4 后重新配对。若加载的是 Downloads 旧目录，移除旧项，开启开发者模式，加载固定目录一次。直接使用本 ZIP 时选择解压后的 Browser-Extension 子目录，其中必须直接包含 manifest.json，不选外层目录。
+3. Chrome 打开 chrome://extensions，Edge 打开 edge://extensions。已有固定目录扩展点击「重新加载」，确认 2.6.0 后重新配对。若加载的是 Downloads 旧目录，移除旧项，开启开发者模式，加载固定目录一次。直接使用本 ZIP 时选择解压后的 Browser-Extension 子目录，其中必须直接包含 manifest.json，不选外层目录。
 4. 打开 https://chatgpt.com/settings/usage?tab=overview，只在官方网站登录。复制悬浮球当前配对码，从浏览器工具栏打开扩展并粘贴连接。不要双击 popup.html。
 
 浏览器模式的「后台定时刷新」仍会创建非活动临时页面，要求浏览器和悬浮球运行、官方登录有效；授权 chatgpt.com 来源覆盖整个来源，采集代码只接受两个精确用量路径。间隔 1–1440 分钟，默认 5。配对和启用只存当前会话，浏览器重启/扩展重载后重新配对并开启。桌面退出也使配对失效。

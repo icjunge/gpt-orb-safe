@@ -252,7 +252,7 @@
   function renderUpdates() {
     const updates = state.updates || {};
     const status = updates.status || 'unconfigured';
-    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.5.4';
+    const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.6.0';
     const availableVersion = typeof updates.availableVersion === 'string' ? updates.availableVersion : '';
     const messages = {
       unconfigured: '更新源尚未启用',
