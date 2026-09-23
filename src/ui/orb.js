@@ -2,10 +2,6 @@
 (() => {
   const orb = document.getElementById('orb');
   const value = document.getElementById('orb-value');
-  const label = document.getElementById('orb-label');
-  const unit = document.getElementById('orb-unit');
-  const reset = document.getElementById('reset');
-  const progress = document.getElementById('progress');
   let state = { status: 'starting', bridge: {}, snapshot: null, settings: { usageSource: 'codex-cli' } };
   let dragging = null;
   let pointerWithin = false;
@@ -13,7 +9,6 @@
   let collapseTimer = null;
   let requestedExpanded = false;
   let expandRevision = 0;
-  const ringLength = 295.310;
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const nativeMode = () => (state.usageSource || state.settings?.usageSource || (state.codex || state.snapshot?.source === 'codex-cli' ? 'codex-cli' : 'browser')) === 'codex-cli';
   const snapshot = () => state.snapshot && ((state.snapshot.source === 'codex-cli') === nativeMode()) ? state.snapshot : null;
@@ -29,11 +24,9 @@
     return '不足1分';
   }
   function render() {
-    for (const [name, key] of [['native-backdrop', 'orbNativeBackdrop'], ['reduced-transparency', 'reducedTransparency'], ['high-contrast', 'highContrast']]) {
+    for (const [name, key] of [['reduced-transparency', 'reducedTransparency'], ['high-contrast', 'highContrast']]) {
       document.body.classList.toggle(name, state.appearance?.[key] === true);
     }
-    const tint = state.settings?.glassTint;
-    document.body.style.setProperty('--glass-tint', `${Number.isInteger(tint) && tint >= 0 && tint <= 70 ? tint : 16}%`);
     const tightest = windows()[0];
     const native = nativeMode();
     const current = snapshot();
@@ -43,32 +36,31 @@
     const failed = !!state.error || (native && ['error', 'not-found', 'needs-login', 'unsupported'].includes(state.codex?.state));
     const stopped = native && !state.codex?.enabled;
     const unconfirmed = native && state.codex?.state === 'reading' && !finite(state.codex?.lastSuccessAt);
+    let description;
     orb.dataset.status = state.status || 'starting';
     orb.dataset.stale = String(stale || failed || manual || stopped || unconfirmed);
     if (tightest) {
       const remaining = tightest.remaining;
       value.textContent = `${Math.round(remaining)}%`;
-      unit.textContent = manual ? '人工记录' : stale || failed || stopped || unconfirmed ? '上次记录' : native ? 'Codex 剩余' : '页面剩余';
-      progress.style.strokeDashoffset = String(ringLength * (1 - remaining / 100));
+      const sourceLabel = manual ? '人工记录' : stale || failed || stopped || unconfirmed ? '上次记录' : native ? 'Codex 剩余' : '页面剩余';
       orb.dataset.tone = remaining <= 10 ? 'danger' : remaining <= 25 ? 'warning' : 'normal';
       const delta = finite(tightest.resetAt) ? (tightest.resetAt - Date.now()) / 1000 : null;
-      reset.textContent = delta === null ? '重置时间未知' : delta <= 0 ? native ? '等待读取确认' : '等待页面确认' : `${tightest.resetApproximate ? '约' : ''}${countdown(delta)}重置`;
+      const resetLabel = delta === null ? '重置时间未知' : delta <= 0 ? native ? '等待读取确认' : '等待页面确认' : `${tightest.resetApproximate ? '约' : ''}${countdown(delta)}重置`;
       const names = { session: '当前时段', weekly: '每周额度', other: '其他额度' };
       const fullLabel = native && typeof tightest.label === 'string' && tightest.label ? tightest.label : names[tightest.kind] || '额度窗口';
-      label.textContent = fullLabel.replace(/^Codex\s*[·・]\s*/i, '');
-      orb.title = `${fullLabel}：剩余 ${Math.round(remaining)}%（${unit.textContent}）\n${reset.textContent}\n点击查看 · 拖动移动`;
+      description = `${fullLabel}：剩余 ${Math.round(remaining)}%（${sourceLabel}）\n${resetLabel}\n点击查看 · 拖动移动`;
     } else {
       value.textContent = '—';
-      label.textContent = 'GPT';
-      progress.style.strokeDashoffset = String(ringLength);
       orb.dataset.tone = 'muted';
       const cliLabels = { disabled: '本机 Codex', reading: '正在读取', ready: '额度未知', 'not-found': '待安装 CLI', 'needs-login': 'CLI 待登录', unsupported: 'CLI 待更新', error: '读取异常' };
-      unit.textContent = native ? cliLabels[state.codex?.state || 'disabled'] || '本机 Codex' : failed ? '同步异常' : state.status === 'starting' ? '正在启动' : current ? '额度未知' : '浏览器同步';
-      reset.textContent = current ? '点击查看详情' : native ? '点击查看设置' : state.status === 'starting' ? '正在启动' : '点击开始配对';
-      orb.title = `${unit.textContent} · 点击打开 GPT 用量面板`;
+      const statusLabel = native ? cliLabels[state.codex?.state || 'disabled'] || '本机 Codex' : failed ? '同步异常' : state.status === 'starting' ? '正在启动' : current ? '额度未知' : '浏览器同步';
+      description = `${statusLabel}\n点击查看 · 拖动移动`;
     }
     orb.dataset.wideValue = String(value.textContent.length > 3);
-    orb.setAttribute('aria-label', orb.title.replace(/\n/g, '；'));
+    if (orb.title !== description) {
+      orb.title = description;
+      orb.setAttribute('aria-label', description.replace(/\n/g, '；'));
+    }
   }
   async function action(name, payload) {
     try { return await window.orb?.action(name, payload); } catch { return null; }

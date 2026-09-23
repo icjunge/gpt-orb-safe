@@ -19,7 +19,7 @@ ipcMain.handle('test:action',async(event,action)=>{
     const view=views.find(view=>view.w.webContents===event.sender);
     if(view?.page!=='orb'||typeof action.payload?.expanded!=='boolean')return {ok:false};
     actions.push(action);
-    const size=action.payload.expanded?104:64;
+    const size=action.payload.expanded?56:48;
     await resize(view,size,size);
     return {ok:true,expanded:action.payload.expanded};
   }
@@ -34,12 +34,13 @@ ipcMain.handle('test:action',async(event,action)=>{
 });
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function make(page,width,height){
-  const w=new BrowserWindow({width,height,show:false,frame:false,backgroundColor:'#111918',
+  const w=new BrowserWindow({width,height,show:false,frame:false,transparent:page==='orb',backgroundColor:page==='orb'?'#00000000':'#111918',
     webPreferences:{preload:path.join(__dirname,'render-preload.cjs'),offscreen:true,contextIsolation:true,sandbox:true}});
   const errors=[];
   w.webContents.on('console-message',(_e,level,message)=>{if(level>=3)errors.push(message);});
   const view={w,errors,width,height,page,autoResize:true};views.push(view);
   await w.loadFile(path.join(__dirname,'../src/ui',page+'.html'));
+  await w.webContents.executeJavaScript('document.fonts.ready.then(()=>true)');
   // Ozone headless can report a 1×1 viewport despite the requested native size.
   // Override only the test viewport; production window behavior is unchanged.
   if(await w.webContents.executeJavaScript('innerWidth')!==width){
@@ -57,6 +58,16 @@ async function change(view,newState){state=newState;view.w.webContents.send('tes
 async function run(view,code){return view.w.webContents.executeJavaScript(code);}
 async function input(view,event,delay=40){await view.w.webContents.sendInputEvent(event);await wait(delay);}
 async function shot(view,name){view.w.webContents.invalidate();await wait(250);const image=await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height});equal(image.getSize().width,view.width);equal(image.getSize().height,view.height);fs.writeFileSync(path.join(out,name),image.toPNG());}
+// Assert the captured compositor pixels, not merely a transparent CSS declaration.
+// This checks renderer alpha only; Windows DWM composition is a separate concern.
+async function orbAlpha(view,name){
+  view.w.webContents.invalidate();await wait(100);
+  const png=(await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height})).toPNG();
+  const samples=await run(view,`new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const context=canvas.getContext('2d');context.drawImage(img,0,0);resolve([[0,0],[img.width-1,0],[0,img.height-1],[img.width-1,img.height-1],[Math.floor(img.width/2),8]].map(([x,y])=>[...context.getImageData(x,y,1,1).data]));};img.onerror=()=>reject(new Error('Screenshot PNG could not be decoded'));img.src='data:image/png;base64,${png.toString('base64')}';})`);
+  equal(samples.slice(0,4).every(pixel=>pixel[3]===0),true,`${name}: all four captured corners have zero alpha`);
+  equal(samples[4][3]>0&&samples[4][3]<128,true,`${name}: the circular fill transmits the background`);
+  return samples;
+}
 // This fixture tests CSS light transmission, not native Windows backdrop support.
 // It never ships in the product, samples a screen, or contacts a network.
 async function materialIllustration(view){
@@ -219,80 +230,88 @@ app.whenReady().then(async()=>{
   panelHeightLimit=480;await resize(panel,320,480);
   equal(await run(panel,"document.documentElement.scrollWidth<=innerWidth"),true);
   await change(panel,live);
-  const orb=await make('orb',64,64);
+  const orb=await make('orb',48,48);
+  equal(await run(orb,"[...document.fonts].some(face=>face.family==='Inter'&&face.status==='loaded')&&document.fonts.check('500 20px Inter','100%')"),true,'bundled Inter loads before measuring the percentage');
+  match(await run(orb,"getComputedStyle(document.getElementById('orb-value')).fontFamily"),/Inter/);
   equal(await run(orb,"document.getElementById('orb-value').textContent"),'64%');
   await shot(orb,'orb-demo.png');
-  equal(await run(orb,"[...document.querySelectorAll('.ring,#orb-label,#orb-unit,#reset')].every(node=>getComputedStyle(node).display==='none')"),true,'resting orb shows only its percentage');
-  equal(await run(orb,"document.documentElement.scrollWidth===64&&document.documentElement.scrollHeight===64"),true,'compact orb uses a 64 DIP viewport without clipped scroll content');
+  equal(await run(orb,"document.getElementById('orb').innerText.trim()==='64%'"),true,'resting orb shows only its percentage');
+  equal(await run(orb,"document.documentElement.scrollWidth===48&&document.documentElement.scrollHeight===48"),true,'compact orb uses a 48 DIP viewport without clipped scroll content');
   await shot(orb,'orb-compact.png');
+  await orbAlpha(orb,'compact orb');
+  match(await run(orb,"document.getElementById('orb').title"),/每周额度.*剩余 64%.*页面剩余/);
+  match(await run(orb,"document.getElementById('orb').title"),/重置/);
+  equal(await run(orb,"document.getElementById('orb').getAttribute('aria-label')"),await run(orb,"document.getElementById('orb').title.replace(/\\n/g,'；')"),'screen-reader description includes the same hover details');
   const interactionStart=actions.length;
-  await input(orb,{type:'mouseMove',x:32,y:32},220);
-  equal(orb.width,104,'real pointer entry requests the expanded native viewport');
-  equal(orb.height,104);
-  equal(await run(orb,"[...document.querySelectorAll('.ring,#orb-label,#orb-unit,#reset')].every(node=>getComputedStyle(node).display!=='none')"),true,'hover reveals the quota window and reset summary');
+  await input(orb,{type:'mouseMove',x:24,y:24},220);
+  equal(orb.width,56,'real pointer entry requests the expanded native viewport');
+  equal(orb.height,56);
+  equal(await run(orb,"document.getElementById('orb').innerText.trim()==='64%'"),true,'hover keeps the circle percentage-only');
   await shot(orb,'orb-expanded.png');
+  await orbAlpha(orb,'hover orb');
   await input(orb,{type:'mouseMove',x:0,y:0},50);
-  equal(orb.width,104,'brief pointer exit waits before shrinking');
-  await input(orb,{type:'mouseMove',x:52,y:52},220);
-  equal(orb.width,104,'pointer reentry cancels the pending shrink');
+  equal(orb.width,56,'brief pointer exit waits before shrinking');
+  await input(orb,{type:'mouseMove',x:28,y:28},220);
+  equal(orb.width,56,'pointer reentry cancels the pending shrink');
   equal(actions.slice(interactionStart).filter(action=>action.name==='orbExpand'&&!action.payload.expanded).length,0,'reentry does not resize the native window twice');
   await input(orb,{type:'mouseMove',x:0,y:0},320);
-  equal(orb.width,64,'sustained pointer exit restores the small orb');
+  equal(orb.width,48,'sustained pointer exit restores the small orb');
   equal(actions.slice(interactionStart).some(action=>action.name==='togglePanel'),false,'hover never opens the panel');
-  await input(orb,{type:'mouseMove',x:32,y:32},220);
-  await input(orb,{type:'mouseMove',x:52,y:52});
+  await input(orb,{type:'mouseMove',x:24,y:24},220);
+  await input(orb,{type:'mouseMove',x:28,y:28});
   const clickStart=actions.length;
   await input(orb,{type:'mouseDown',button:'left',clickCount:1});
   await input(orb,{type:'mouseUp',button:'left',clickCount:1});
   equal(actions.slice(clickStart).filter(action=>action.name==='togglePanel').length,1,'one actual pointer click toggles the panel once');
   equal(actions.slice(clickStart).filter(action=>action.name==='dragEnd').length,1,'normal pointer release cleans up capture only once');
   await input(orb,{type:'mouseMove',x:0,y:0},320);
-  equal(orb.width,64,'mouse-created focus does not keep a departed orb expanded');
-  await input(orb,{type:'mouseMove',x:32,y:32},220);
-  await input(orb,{type:'mouseMove',x:52,y:52});
+  equal(orb.width,48,'mouse-created focus does not keep a departed orb expanded');
+  await input(orb,{type:'mouseMove',x:24,y:24},220);
+  await input(orb,{type:'mouseMove',x:28,y:28});
   const dragStart=actions.length;
   await input(orb,{type:'mouseDown',button:'left',clickCount:1});
-  await input(orb,{type:'mouseMove',x:80,y:52});
+  await input(orb,{type:'mouseMove',x:44,y:28});
   await input(orb,{type:'mouseMove',x:0,y:0},220);
-  equal(orb.width,104,'pointer capture keeps the expanded window stable during dragging');
+  equal(orb.width,56,'pointer capture keeps the expanded window stable during dragging');
   await input(orb,{type:'mouseUp',button:'left',clickCount:1},320);
   equal(actions.slice(dragStart).filter(action=>action.name==='togglePanel').length,0,'drag release never opens the panel');
   equal(actions.slice(dragStart).some(action=>action.name==='dragMove'),true,'movement passes through the drag action');
-  equal(orb.width,64,'drag release outside permits the compact viewport');
+  equal(orb.width,48,'drag release outside permits the compact viewport');
   for(const ending of ['pointercancel','lostpointercapture']){
-    await input(orb,{type:'mouseMove',x:32,y:32},220);
-    await input(orb,{type:'mouseMove',x:52,y:52});
+    await input(orb,{type:'mouseMove',x:24,y:24},220);
+    await input(orb,{type:'mouseMove',x:28,y:28});
     await run(orb,"document.getElementById('orb').addEventListener('pointerdown',event=>{window.__testPointerId=event.pointerId},{once:true})");
     const cancellationStart=actions.length;
     await input(orb,{type:'mouseDown',button:'left',clickCount:1});
     // Activate the pending capture before simulating its external loss.
-    await input(orb,{type:'mouseMove',x:53,y:52});
+    await input(orb,{type:'mouseMove',x:29,y:28});
     await run(orb,ending==='pointercancel'
       ? "document.getElementById('orb').dispatchEvent(new PointerEvent('pointercancel',{pointerId:window.__testPointerId,bubbles:true}))"
       : "document.getElementById('orb').releasePointerCapture(window.__testPointerId)");
     // A subsequent real input flushes the browser's pending lost-capture event.
-    await input(orb,{type:'mouseMove',x:54,y:52});
+    await input(orb,{type:'mouseMove',x:30,y:28});
     await input(orb,{type:'mouseUp',button:'left',clickCount:1});
     equal(actions.slice(cancellationStart).filter(action=>action.name==='togglePanel').length,0,`${ending} cannot turn an interrupted gesture into a click`);
     equal(actions.slice(cancellationStart).filter(action=>action.name==='dragEnd').length,1,`${ending} ends the gesture exactly once`);
     await input(orb,{type:'mouseMove',x:0,y:0},320);
-    equal(orb.width,64,`${ending} does not leave hover locked open`);
+    equal(orb.width,48,`${ending} does not leave hover locked open`);
   }
   await run(orb,"document.body.tabIndex=-1;document.body.focus();document.body.removeAttribute('tabindex')");
   await input(orb,{type:'keyDown',keyCode:'Tab'});
   await input(orb,{type:'keyUp',keyCode:'Tab'},220);
   equal(await run(orb,"document.activeElement.id"),'orb','keyboard navigation can reach the compact orb');
-  equal(orb.width,104,'keyboard-visible focus reveals the same detail as hover');
+  equal(orb.width,56,'keyboard-visible focus uses the same small enlargement as hover');
   const keyboardStart=actions.length;
   await input(orb,{type:'keyDown',keyCode:'Return'});
   await input(orb,{type:'keyDown',keyCode:'Return'});
   await input(orb,{type:'keyUp',keyCode:'Return'});
   equal(actions.slice(keyboardStart).filter(action=>action.name==='togglePanel').length,1,'held keyboard activation opens the panel only once');
   await run(orb,"document.getElementById('orb').blur()");await wait(320);
-  equal(orb.width,64,'blur restores compact size after keyboard use');
-  await change(orb,stale);equal(await run(orb,"document.getElementById('orb-unit').textContent"),'上次记录');
-  await change(orb,manual);equal(await run(orb,"document.getElementById('orb-unit').textContent"),'人工记录');
-  await change(orb,expired);equal(await run(orb,"document.getElementById('reset').textContent"),'等待页面确认');
+  equal(orb.width,48,'blur restores compact size after keyboard use');
+  await change(orb,stale);match(await run(orb,"document.getElementById('orb').title"),/上次记录/);
+  equal(await run(orb,"document.getElementById('orb').innerText.trim()"),'64%','stale detail stays out of the visible circle');
+  await change(orb,manual);match(await run(orb,"document.getElementById('orb').title"),/人工记录/);
+  await change(orb,expired);match(await run(orb,"document.getElementById('orb').title"),/等待页面确认/);
   // Native Codex fixtures exercise disclosure behavior in the real renderer.
   // All numbers below are examples; no account, credentials, or network is used.
   const version=require('../package.json').version;
@@ -323,7 +342,9 @@ app.whenReady().then(async()=>{
   const threeWindowHeight=panel.height;
   await change(panel,{...native,snapshot:{...native.snapshot,windows:native.snapshot.windows.slice(0,2)}});
   await run(panel,"document.getElementById('panel-title').textContent='预览 · 示例数据'");
-  equal(panel.height<threeWindowHeight,true,'two quota windows request a shorter panel than three');
+  // The resize crosses the asynchronous renderer/host boundary after a debounce.
+  for(let attempts=0;panel.height>=threeWindowHeight&&attempts<20;attempts++)await wait(25);
+  equal(panel.height<threeWindowHeight,true,`two quota windows request a shorter panel than three (${panel.height} vs ${threeWindowHeight})`);
   equal(panel.height>=240&&panel.height<=360,true,'two-window panel keeps a compact usable height');
   await shot(panel,'native-two-windows.png');
   await change(panel,{...native,snapshot:{...native.snapshot,windows:native.snapshot.windows.slice(0,2).map((window,index)=>({...window,usedPercent:index?100:0}))}});
@@ -408,24 +429,31 @@ app.whenReady().then(async()=>{
   await change(orb,native);
   equal(await run(orb,"document.getElementById('orb-value').textContent"),'64%');
   await shot(orb,'native-orb.png');
-  await change(orb,{...native,appearance:{nativeBackdrop:true,orbNativeBackdrop:false}});
-  equal(await run(orb,"document.body.classList.contains('native-backdrop')"),false,'panel material status cannot claim that the orb has a native backdrop');
-  const nativeOrb={...native,appearance:{orbNativeBackdrop:true,orbNativeHost:true,orbBackdropStatus:'requested'},settings:{...native.settings,glassTint:16}};
-  await change(orb,nativeOrb);
-  equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgba(18, 22, 27, 0.16)','orb native material request uses only a thin tint');
-  equal(await run(orb,"getComputedStyle(document.getElementById('orb-value')).opacity"),'1','glass tint keeps the percentage text opaque');
-  await change(orb,{...nativeOrb,snapshot:{...native.snapshot,windows:[{...native.snapshot.windows[0],usedPercent:0}]}});
-  equal(await run(orb,"document.getElementById('orb-value').textContent"),'100%');
-  equal(await run(orb,"(() => {const rect=document.getElementById('orb-value').getBoundingClientRect();return rect.left>=4&&rect.right<=60;})()"),true,'100 percent fits the resting orb with room at both edges');
-  await shot(orb,'orb-compact-full.png');
-  await change(orb,nativeOrb);
-  await shot(orb,'orb-native-tint-compact.png');
-  await input(orb,{type:'mouseMove',x:32,y:32},220);
-  equal(await run(orb,"[...document.querySelectorAll('#orb-label,#orb-value,#orb-unit,#reset')].every(node=>{const rect=node.getBoundingClientRect();return rect.left>=10&&rect.right<=94&&rect.top>=10&&rect.bottom<=94;})"),true,'expanded orb text stays inside the circular progress ring');
-  await shot(orb,'orb-native-tint-expanded.png');
-  await change(orb,{...nativeOrb,appearance:{...nativeOrb.appearance,reducedTransparency:true}});
-  equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgb(23, 27, 34)','reduced transparency overrides the native tint hint');
-  await change(orb,{...nativeOrb,appearance:{...nativeOrb.appearance,highContrast:true,reducedTransparency:true}});
+  const alphaOrb={...native,appearance:{nativeBackdrop:true,orbNativeBackdrop:false,orbNativeHost:false,orbBackdropStatus:'transparent'}};
+  await change(orb,alphaOrb);
+  equal(await run(orb,"document.body.classList.contains('native-backdrop')"),false,'panel material status cannot enable an orb native backdrop');
+  equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgba(18, 22, 27, 0.22)','percentage orb has a light transparent fill');
+  equal(await run(orb,"getComputedStyle(document.getElementById('orb-value')).opacity"),'1','transparent fill keeps the percentage text opaque');
+  for(const usedPercent of [0,100]){
+    await change(orb,{...alphaOrb,snapshot:{...native.snapshot,windows:[{...native.snapshot.windows[0],usedPercent}]}});
+    equal(await run(orb,"document.getElementById('orb-value').textContent"),`${100-usedPercent}%`);
+    equal(await run(orb,"(() => {const rect=document.getElementById('orb-value').getBoundingClientRect();return rect.left>=3&&rect.right<=45;})()"),true,`${100-usedPercent} percent fits the 48 DIP circle with room at both edges`);
+    await shot(orb,usedPercent===0?'orb-compact-full.png':'orb-compact-zero.png');
+  }
+  await change(orb,{...alphaOrb,snapshot:null});
+  equal(await run(orb,"document.getElementById('orb').innerText.trim()"),'—','unavailable quota displays no misleading percentage');
+  match(await run(orb,"document.getElementById('orb').title"),/额度未知/);
+  await shot(orb,'orb-compact-unknown.png');
+  await change(orb,alphaOrb);
+  await shot(orb,'orb-alpha-compact.png');
+  await input(orb,{type:'mouseMove',x:24,y:24},220);
+  equal(await run(orb,"(() => {const rect=document.getElementById('orb-value').getBoundingClientRect();return rect.left>=4&&rect.right<=52&&rect.top>=8&&rect.bottom<=48;})()"),true,'hover percentage fits within the 56 DIP circle');
+  equal(await run(orb,"document.getElementById('orb').innerText.trim()"),'64%','hover does not add visible labels');
+  await shot(orb,'orb-alpha-hover.png');
+  await orbAlpha(orb,'Codex hover orb');
+  await change(orb,{...alphaOrb,appearance:{...alphaOrb.appearance,reducedTransparency:true}});
+  equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgb(23, 27, 34)','reduced transparency overrides the translucent fill');
+  await change(orb,{...alphaOrb,appearance:{...alphaOrb.appearance,highContrast:true,reducedTransparency:true}});
   equal(await run(orb,"document.body.classList.contains('high-contrast')"),true);
   await shot(orb,'orb-high-contrast.png');
   await change(panel,{...native,updates:{...updates,status:'ready',currentVersion:'2.4.1',availableVersion:version,lastCheckedAt:now}});

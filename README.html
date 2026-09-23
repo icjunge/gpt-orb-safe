@@ -4,20 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>GPT 悬浮球 2.5.1 · 使用说明</title>
+<title>GPT 悬浮球 2.5.2 · 使用说明</title>
 <style>
 :root{color-scheme:dark;font:16px/1.8 system-ui,"Microsoft YaHei",sans-serif;color:#dbe5e7;background:#0a1014}*{box-sizing:border-box}body{margin:0}main{max-width:880px;margin:0 auto;padding:64px 28px 88px}header{padding-bottom:36px;border-bottom:1px solid #253039}.eyebrow{font-size:12px;letter-spacing:2px;color:#8ddbc6}h1{font-size:38px;line-height:1.3;letter-spacing:-1px;margin:14px 0}h2{font-size:21px;margin:36px 0 12px;color:#f0f6f6}p,ol,ul{margin:12px 0}.lead{font-size:18px;color:#aebfc6;max-width:720px}.callout{border:1px solid #345e54;background:#112921;padding:18px 22px;border-radius:14px;margin:26px 0}li{padding-left:4px;margin:9px 0}code{font-size:.9em;background:#1a252e;border:1px solid #2e3943;border-radius:5px;padding:2px 6px;overflow-wrap:anywhere}a{color:#85dbc7;text-decoration:underline;text-underline-offset:3px}table{width:100%;border-collapse:collapse;font-size:14px;margin:20px 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #27333b;padding:12px}th{color:#9cacb5;font-weight:500}td:first-child{width:150px;color:#dff7ef}small,.muted{color:#9babb3}footer{border-top:1px solid #253039;margin-top:36px;padding-top:22px;color:#899ba5;font-size:13px}strong{color:#f4faf8}@media(max-width:580px){main{padding:30px 20px}h1{font-size:30px}td:first-child{width:95px}}
 </style>
 </head>
 <body><main>
-<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.5.1</div><h1>关掉网页，<br>额度照常更新。</h1><p class="lead">Windows 10 / 11 · 64 位<br>通过本机官方 Codex CLI 定时查询，浏览器扩展保留为备用来源。刷新无需临时打开网页。</p></header>
+<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.5.2</div><h1>关掉网页，<br>额度照常更新。</h1><p class="lead">Windows 10 / 11 · 64 位<br>通过本机官方 Codex CLI 定时查询，浏览器扩展保留为备用来源。刷新无需临时打开网页。</p></header>
 <div class="callout"><strong>在现有应用内更新。</strong><br>已有 2.4.1 安装版可在「设置 → 版本与更新」检查新版，下载完成后点击「重启并更新」，无需手动下载测试安装器。正式发布审批完成前不会收到新版。登录由官方 CLI 管理，悬浮球不读取或复制账号凭据文件；不发起模型任务，也不自动重置额度。</div>
-<h2>2.5.1 界面更新</h2>
-<p>悬浮球平时为 64 像素，只显示剩余百分比；鼠标移上去放大到 104 像素，显示额度窗口和重置时间，移开收起。点击查看详情，拖动移动。详情面板保留简洁布局；Token 和重置次数未提供时隐藏，0 正常显示。</p>
-<p>支持的 Windows 11 且确认硬件合成可用时，悬浮球请求系统 Acrylic，让背后应用的颜色参与模糊；实际效果仍由系统决定。软件合成、能力未知或较旧系统采用透明圆球；高对比及减少透明度时使用清晰实色。原生玻璃着色默认 16%，可调 0–70%，文字保持清晰。云端测试不能保证实体电脑上的模糊光晕；产品不截图桌面、不新增采集权限。</p>
+<h2>2.5.2 界面更新</h2>
+<p>48 像素透明圆球，悬停轻微放大至 56 像素。球内始终只有剩余百分比，其他用量信息在鼠标悬停提示中查看；点击打开详情，拖动移动。</p>
+<p>修复圆球后的矩形底色：圆球关闭系统 Acrylic，使用真正透明的窗口及半透明圆面；详情面板保留原有材质。圆球不宣称跨应用背景模糊。Windows 本地内置 Inter 字体，Apple 平台优先使用系统字体；未打包 Apple SF Pro。原生鼠标提示使用 Windows 系统字体。</p>
 <h2>首次连接本机 Codex</h2>
 <ol>
-<li>更新至可信渠道正式发布的 2.5.1 桌面安装版。已有安装版可检查签名更新；若新包尚未发布，可按下节运行源码。先退出旧悬浮球。</li>
+<li>更新至可信渠道正式发布的 2.5.2 桌面安装版。已有安装版可检查签名更新；若新包尚未发布，可按下节运行源码。先退出旧悬浮球。</li>
 <li>在 Windows PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后执行 <code>codex.cmd login</code>，在官方流程中使用与网页版相同的 ChatGPT 账号登录。已安装并登录的用户无需重复。npm 安装需要 Node.js/npm；Windows 使用 .cmd 入口，无需更改 PowerShell 执行策略。</li>
 <li>安装后重新打开终端与悬浮球，以取得最新环境。在设置「数据来源」选择「本机 Codex」。填写整数 1–1440 分钟，默认 5，点击「保存」，然后点击「开启读取」。</li>
 <li>点击「立即刷新」，确认成功读取时间及额度。以后保持悬浮球运行即可，浏览器可以关闭。</li>
@@ -62,5 +62,5 @@
 <p>自动测试使用合成协议和数据，覆盖查询、异常、来源切换、数据校验及既有更新边界。<strong>真实 Windows 安装 / 升级、官方 CLI 登录及账号额度仍需实机验收。</strong>已有 Electron / MV3 检查也不等于完整 Chrome / Edge 权限流程通过。</p>
 <p>卸载前停止开机启动并退出悬浮球，不再使用扩展时在浏览器移除，再从 Windows 已安装应用卸载。用户目录默认保留设置和备份。卸载悬浮球不卸载 CLI，也不退出官方账号。</p>
 <p>完整说明：<a href="README.md">README.md</a> · <a href="SECURITY.md">SECURITY.md</a> · <a href="RELEASE.md">发布流程</a>。</p>
-<footer>GPT 悬浮球 2.5.1 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>
+<footer>GPT 悬浮球 2.5.2 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>
 </main></body></html>

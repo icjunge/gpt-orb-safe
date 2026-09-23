@@ -11,17 +11,16 @@ const {UpdateManager} = require('./updater.cjs');
 const {validSettings,allowedSender} = require('./security.cjs');
 const {CodexProvider} = require('./codex-provider.cjs');
 const {discoverCodex} = require('./codex-discovery.cjs');
-const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial,observeGpuCompositing} = require('./window-material.cjs');
+const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial} = require('./window-material.cjs');
 const {COMPACT_SIZE,createOrbController} = require('./orb-window.cjs');
 app.setName('GPT Usage Orb Safe');
 app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 // App-local material scheme; does not change the Windows system theme.
 nativeTheme.themeSource='dark';
-const gpuCompositing=observeGpuCompositing(app,{setTimer:setTimeout,clearTimer:clearTimeout});
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
 let codexProvider=null;
-let orbController=null,nativeOrbHost=false;
+let orbController=null;
 let panelHeight=240;
 let appearance=systemAppearance(nativeTheme);
 const unavailableUpdates=()=>({status:'unconfigured',currentVersion:app.getVersion(),availableVersion:null,progress:null,
@@ -87,22 +86,19 @@ function harden(win,file){
   win.on('closed',()=>trustedWindows.delete(contents));
 }
 function applyOrbOpacity(){
-  // Even setOpacity(1) makes Electron's Windows host layered. Native backdrop
-  // hosts keep opaque text and adjust only the renderer's surface tint.
-  if(!nativeOrbHost)orbWindow.setOpacity(systemAppearance(nativeTheme).reducedTransparency?1:settings.opacity);
+  // The alpha host keeps the user's existing opacity preference. Accessibility
+  // modes keep text fully opaque and let CSS fill only the circular surface.
+  orbWindow.setOpacity(systemAppearance(nativeTheme).reducedTransparency?1:settings.opacity);
 }
-function createWindows(compositor){
+function createWindows(){
   const common={frame:false,transparent:true,backgroundColor:'#00000000',resizable:false,maximizable:false,
     minimizable:false,fullscreenable:false,show:false,skipTaskbar:true,icon:path.join(__dirname,'../assets/orb.png'),
     webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,
       webSecurity:true,webviewTag:false,backgroundThrottling:true,spellcheck:false}};
-  // This is a startup host choice, not proof of visible DWM blur. Unknown and
-  // software compositors use the ordinary alpha circle; the next launch can
-  // reconsider the choice without replacing a window during a drag.
-  nativeOrbHost=supportsAcrylic(process.platform,os.release())&&compositor==='hardware'&&
-    !systemAppearance(nativeTheme).reducedTransparency;
+  // A transparent, shaped host avoids DWM's rectangular Acrylic fallback.
+  // This choice is independent of GPU feature status and never delays startup.
   orbWindow=new BrowserWindow({...common,width:COMPACT_SIZE,height:COMPACT_SIZE,...clampPosition(savedPosition),
-    transparent:!nativeOrbHost,thickFrame:false,roundedCorners:false,hasShadow:false});
+    thickFrame:false,roundedCorners:false,hasShadow:false});
   orbController=createOrbController(orbWindow,screen,{platform:process.platform});
   // Crossing displays can change HWND DPI even though the DIP size is unchanged.
   orbWindow.on('move',()=>orbController.refreshShape());
@@ -111,7 +107,7 @@ function createWindows(compositor){
     transparent:!nativePanel});
   const updateAppearance=()=>{
     const options={platform:process.platform,release:os.release(),theme:nativeTheme};
-    appearance={...applyPanelMaterial(panelWindow,options),...applyOrbMaterial(orbWindow,{...options,nativeHost:nativeOrbHost})};
+    appearance={...applyPanelMaterial(panelWindow,options),...applyOrbMaterial(orbWindow,options)};
     applyOrbOpacity();
     publish();
   };
@@ -233,9 +229,8 @@ else{
     Menu.setApplicationMenu(null);loadSettings();
     fs.mkdirSync(app.getPath('userData'),{recursive:true});
     extensionInfo=await syncExtension({sourceDir:path.join(app.getAppPath(),'extension'),userData:app.getPath('userData')});
-    const compositor=await gpuCompositing.wait();
     if(quitting)return;
-    registerIpc();createWindows(compositor);createTray();
+    registerIpc();createWindows();createTray();
     const codexWorkingDirectory=path.join(app.getPath('userData'),'codex-query');
     fs.mkdirSync(codexWorkingDirectory,{recursive:true});
     codexProvider=new CodexProvider({discover:()=>discoverCodex(),cwd:codexWorkingDirectory,
@@ -263,7 +258,7 @@ else{
   }).catch(()=>{dialog.showErrorBox('GPT 悬浮球启动失败','请重新打开程序；若仍无法启动，请使用完整安装包修复。官方账号凭据不由悬浮球保存。');app.quit();});
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(quitting)return;event.preventDefault();quitting=true;
-    gpuCompositing.stop();clearInterval(tick);clearInterval(updateTimer);clearTimeout(firstUpdateTimer);clearTimeout(saveTimer);updateManager?.stop();codexProvider?.stop();saveSettings();snapshot=null;globalShortcut.unregisterAll();tray?.destroy();
+    clearInterval(tick);clearInterval(updateTimer);clearTimeout(firstUpdateTimer);clearTimeout(saveTimer);updateManager?.stop();codexProvider?.stop();saveSettings();snapshot=null;globalShortcut.unregisterAll();tray?.destroy();
     Promise.resolve(bridge?.close()).finally(()=>app.quit());
   });
 }

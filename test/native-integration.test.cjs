@@ -15,8 +15,7 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false,
-  gpuCompositing='enabled',gpuFailure=false,gpuTimeout=false} = {}) {
+async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
   const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[]};
   const userData = '/virtual-orb/user-data';
@@ -26,18 +25,13 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
   let nextTimer = 1;
   const addTimer = (callback, delay) => { const id = nextTimer++; timers.set(id, {callback, delay}); return id; };
   const app = new EventEmitter();
-  let gpuEventSeen=false;
   const nativeTheme=Object.assign(new EventEmitter(),{prefersReducedTransparency:false,shouldUseHighContrastColors:false},theme);
   Object.assign(app, {
     isPackaged:false,
     setName(){}, setAppUserModelId(){}, requestSingleInstanceLock:()=>true,
     whenReady:()=>Promise.resolve(), getVersion:()=> '2.3.0',
-    getGPUFeatureStatus(){assert.equal(gpuEventSeen,true,'GPU features must not be used before gpu-info-update');return{gpu_compositing:gpuCompositing};},
-    getGPUInfo(){
-      if(gpuFailure)throw Error('GPU query unavailable');
-      if(gpuTimeout)return new Promise(()=>{});
-      gpuEventSeen=true;app.emit('gpu-info-update');return Promise.resolve({});
-    },
+    getGPUFeatureStatus(){assert.fail('orb startup must not depend on GPU feature status');},
+    getGPUInfo(){assert.fail('orb startup must not request GPU information');},
     getPath:name => { assert.equal(name, 'userData'); return userData; },
     getAppPath:()=>path.resolve(__dirname, '..'),
     setLoginItemSettings:value => calls.login.push(value),
@@ -59,7 +53,7 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     loadFile(file){this.webContents.mainFrame.url=pathToFileURL(file).href;}
     isDestroyed(){return false;}
     setAlwaysOnTop(){} setOpacity(value){(this.opacities||=[]).push(value);} focus(){this.focusCalls=(this.focusCalls||0)+1;}
-    setBackgroundMaterial(value){if((backdropFails||(orbBackdropFails&&windows[0]===this))&&value==='acrylic')throw new Error('unavailable compositor');this.material=value;}
+    setBackgroundMaterial(value){if((backdropFails&&value==='acrylic')||(orbBackdropFails&&windows[0]===this))throw new Error('unavailable compositor');this.material=value;}
     setBackgroundColor(value){this.backgroundColor=value;}
     setShape(value){(this.shapes||=[]).push(clone(value));}
     showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
@@ -134,11 +128,6 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     setTimeout:addTimer,setInterval:addTimer,clearTimeout:id=>timers.delete(id),clearInterval:id=>timers.delete(id)
   },{filename:mainFile});
   await settle();
-  if(gpuTimeout||gpuCompositing==='future-value'){
-    const pending=[...timers.values()].filter(timer=>timer.delay===1200);
-    assert.equal(pending.length,1);assert.equal(windows.length,0,'unknown GPU readiness has a bounded wait before choosing a host');
-    pending[0].callback();await settle();
-  }
   assert.deepEqual(calls.errors,[],'controller initialization must succeed');
   assert.equal(providers.length,1); assert.equal(bridges.length,1);
   const sender=windows[1].webContents;
@@ -150,18 +139,18 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     async quit(){app.quit();await settle();}};
 }
 
-test('native orb and panel request separate acrylic hosts and follow accessibility without fading text or activating the orb',async()=>{
+test('orb remains a small transparent alpha circle while panel Acrylic and accessibility work independently',async()=>{
   const h=await launch();
   const [orb,panel]=h.windows;
-  assert.equal(orb.options.transparent,false);
+  assert.equal(orb.options.transparent,true);
   assert.equal(orb.options.thickFrame,false);
   assert.equal(orb.options.roundedCorners,false);
-  assert.equal(orb.options.width,64);
-  assert.equal(orb.options.height,64);
-  assert.equal(orb.material,'acrylic');
+  assert.equal(orb.options.width,48);
+  assert.equal(orb.options.height,48);
+  assert.equal(orb.material,'none');
   assert.equal(orb.backgroundColor,'#00000000');
   assert.equal(orb.shapes.length,1);
-  assert.equal(orb.opacities,undefined);
+  assert.deepEqual(orb.opacities,[1]);
   assert.equal(orb.focusCalls,undefined);
   assert.equal(panel.options.transparent,false);
   assert.equal(panel.options.roundedCorners,true);
@@ -171,7 +160,7 @@ test('native orb and panel request separate acrylic hosts and follow accessibili
   assert.equal(panel.material,'acrylic');
   assert.equal(panel.backgroundColor,'#00000000');
   assert.deepEqual(h.state().appearance,{nativeBackdrop:true,backdropStatus:'requested',reducedTransparency:false,highContrast:false,
-    orbNativeHost:true,orbNativeBackdrop:true,orbBackdropStatus:'requested'});
+    orbNativeHost:false,orbNativeBackdrop:false,orbBackdropStatus:'unavailable'});
   h.nativeTheme.prefersReducedTransparency=true;
   h.nativeTheme.emit('updated');
   assert.equal(panel.material,'none');
@@ -187,9 +176,9 @@ test('native orb and panel request separate acrylic hosts and follow accessibili
   h.nativeTheme.shouldUseHighContrastColors=false;
   h.nativeTheme.emit('updated');
   assert.equal(panel.material,'acrylic');
-  assert.equal(orb.material,'acrylic');
+  assert.equal(orb.material,'none');
   await h.action('setSettings',{opacity:.6});
-  assert.equal(orb.opacities,undefined,'even setting native host opacity to 1 would make the window layered');
+  assert.equal(orb.opacities.at(-1),.6,'the alpha host retains the existing opacity setting');
   assert.deepEqual([...h.handlers.keys()],['orb:state','orb:action']);
 });
 
@@ -206,13 +195,13 @@ test('orb hover accepts only a boolean from its exact main frame and cannot move
     assert.deepEqual(clone(orb.bounds),initial);
   }
   assert.deepEqual(await h.action('orbExpand',{expanded:true},event),{ok:true,expanded:true});
-  assert.equal(orb.bounds.width,104);assert.equal(orb.bounds.height,104);
-  assert.equal(orb.bounds.x+52,initial.x+32);assert.equal(orb.bounds.y+52,initial.y+32);
+  assert.equal(orb.bounds.width,56);assert.equal(orb.bounds.height,56);
+  assert.equal(orb.bounds.x+28,initial.x+24);assert.equal(orb.bounds.y+28,initial.y+24);
   assert.deepEqual(clone(panel.bounds),panelBounds);
   assert.equal(orb.focusCalls,undefined);assert.equal(panel.focusCalls,undefined);
   await h.action('orbExpand',{expanded:false},event);
   assert.equal(orb.bounds.x,initial.x);assert.equal(orb.bounds.y,initial.y);
-  assert.equal(orb.bounds.width,64);assert.equal(orb.bounds.height,64);
+  assert.equal(orb.bounds.width,48);assert.equal(orb.bounds.height,48);
 });
 
 test('drag keeps the expanded orb inside a display, then restores pending compact size and saves its compact position',async()=>{
@@ -221,46 +210,44 @@ test('drag keeps the expanded orb inside a display, then restores pending compac
   h.screen.getCursorScreenPoint=()=>({x:500,y:500});
   await h.action('dragStart',undefined,event);
   assert.deepEqual(await h.action('orbExpand',{expanded:false},event),{ok:true,expanded:true,queued:true});
-  assert.equal(orb.bounds.width,104);
+  assert.equal(orb.bounds.width,56);
   h.screen.getCursorScreenPoint=()=>({x:4000,y:4000});
   await h.action('dragMove',{x:-9999,y:-9999},event);
-  assert.equal(orb.bounds.x,1816);assert.equal(orb.bounds.y,976);
+  assert.equal(orb.bounds.x,1864);assert.equal(orb.bounds.y,1024);
   await h.action('dragEnd',undefined,event);
-  assert.equal(orb.bounds.width,64);assert.equal(orb.bounds.x,1836);assert.equal(orb.bounds.y,996);
+  assert.equal(orb.bounds.width,48);assert.equal(orb.bounds.x,1868);assert.equal(orb.bounds.y,1028);
   for(const timer of h.timers.values())if(timer.delay===250)timer.callback();
-  assert.deepEqual(h.saved().position,{x:1836,y:996});
+  assert.deepEqual(h.saved().position,{x:1868,y:1028});
   const shapes=orb.shapes.length;
   h.screen.emit('display-metrics-changed');
   assert.equal(orb.shapes.length,shapes+1,'rebuild the native region even if DIP dimensions do not change');
 });
 
-test('orb material failure does not overwrite a working panel paint hint or invoke whole-window opacity',async()=>{
+test('orb material failure leaves its host transparent without overwriting the working panel',async()=>{
   const h=await launch({orbBackdropFails:true});
   assert.equal(h.state().appearance.nativeBackdrop,true);
   assert.equal(h.state().appearance.orbNativeBackdrop,false);
-  assert.equal(h.state().appearance.orbNativeHost,true);
+  assert.equal(h.state().appearance.orbNativeHost,false);
   assert.equal(h.state().appearance.orbBackdropStatus,'unavailable');
-  assert.equal(h.windows[0].backgroundColor,'#171b22');
+  assert.equal(h.windows[0].options.transparent,true);
+  assert.equal(h.windows[0].backgroundColor,'#00000000');
   await h.action('setSettings',{opacity:.55});
-  assert.equal(h.windows[0].opacities,undefined);
+  assert.equal(h.windows[0].opacities.at(-1),.55);
 });
 
-test('known software and unknown GPU modes use an alpha circle with explicit none while the panel policy is unchanged',async()=>{
-  for(const options of [{gpuCompositing:'disabled_software'},{gpuCompositing:'unavailable_software'},
-    {gpuCompositing:'disabled_off'},{gpuCompositing:undefined,gpuFailure:true},{gpuCompositing:'future-value'},{gpuTimeout:true}]){
-    const h=await launch(options),[orb,panel]=h.windows;
-    assert.equal(orb.options.transparent,true);
-    assert.equal(orb.material,'none');
-    assert.equal(orb.backgroundColor,'#00000000');
-    assert.equal(orb.shapes.length,1);
-    assert.deepEqual(orb.opacities,[1]);
-    assert.equal(h.state().appearance.orbNativeHost,false);
-    assert.equal(h.state().appearance.orbNativeBackdrop,false);
-    assert.equal(h.state().appearance.orbBackdropStatus,'unavailable');
-    assert.equal(panel.options.transparent,false);
-    assert.equal(panel.material,'acrylic');
-    assert.equal(h.app.listenerCount('gpu-info-update'),0,'startup probe must release its listener after the decision');
-  }
+test('alpha orb startup requires no GPU query, GPU readiness event or startup delay',async()=>{
+  const h=await launch(),[orb,panel]=h.windows;
+  assert.equal(orb.options.transparent,true);
+  assert.equal(orb.material,'none');
+  assert.equal(orb.backgroundColor,'#00000000');
+  assert.equal(orb.shapes.length,1);
+  assert.deepEqual(orb.opacities,[1]);
+  assert.equal(h.state().appearance.orbNativeHost,false);
+  assert.equal(h.state().appearance.orbNativeBackdrop,false);
+  assert.equal(panel.options.transparent,false);
+  assert.equal(panel.material,'acrylic');
+  assert.equal(h.app.listenerCount('gpu-info-update'),0);
+  assert.equal([...h.timers.values()].some(timer=>timer.delay===1200),false);
 });
 
 test('accessibility at startup chooses an alpha host with an opaque circular surface and keeps the user opacity preference',async()=>{

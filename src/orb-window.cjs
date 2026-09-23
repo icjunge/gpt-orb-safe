@@ -1,7 +1,7 @@
 'use strict';
 
-const COMPACT_SIZE=64;
-const EXPANDED_SIZE=104;
+const COMPACT_SIZE=48;
+const EXPANDED_SIZE=56;
 
 function clampBounds(bounds,area){
   return{...bounds,

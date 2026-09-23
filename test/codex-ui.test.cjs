@@ -377,17 +377,17 @@ test('native freshness follows configured interval and stop preserves a historic
   const state = fixture(); state.snapshot.capturedAt = Date.now() - 600000;
   const panel = harness('panel', state), orb = harness('orb', state); await flush();
   assert.equal(panel.node('sync-status').textContent, '自动刷新');
-  assert.equal(orb.node('orb-unit').textContent, 'Codex 剩余');
+  assert.match(orb.node('orb').title, /Codex 剩余/);
   const stopped = { ...state, codex: { ...state.codex, enabled: false, state: 'disabled' } };
   panel.change(stopped); orb.change(stopped);
   assert.equal(panel.node('sync-status').textContent, '已暂停');
   assert.match(panel.node('freshness-note').textContent, /已暂停/);
   assert.match(panel.textTree(), /54%/);
-  assert.equal(orb.node('orb-unit').textContent, '上次记录');
+  assert.match(orb.node('orb').title, /上次记录/);
   const expired = { ...state, staleAfterMs: 300000 };
   panel.change(expired); orb.change(expired);
   assert.match(panel.node('freshness-note').textContent, /刷新超时/);
-  assert.equal(orb.node('orb-unit').textContent, '上次记录');
+  assert.match(orb.node('orb').title, /上次记录/);
 });
 
 test('zero reset countdown waits for a new read and never refills the percentage', async () => {
@@ -396,7 +396,7 @@ test('zero reset countdown waits for a new read and never refills the percentage
   panel.tick(); orb.tick();
   assert.match(panel.textTree(), /等待读取确认/);
   assert.match(panel.textTree(), /54%/);
-  assert.equal(orb.node('reset').textContent, '等待读取确认');
+  assert.match(orb.node('orb').title, /等待读取确认/);
   assert.equal(orb.node('orb-value').textContent, '54%');
   assert.equal(panel.calls.length + orb.calls.length, 0);
 });
@@ -483,17 +483,22 @@ test('orb fits the rounded 100 percent reading without shrinking ordinary values
   assert.equal(h.node('orb').dataset.wideValue, 'false');
 });
 
-test('orb material tint uses its own native hint and unknown or stale quota stays accessible', async () => {
+test('orb keeps only the percentage visible and exposes quota details through hover and accessibility', async () => {
+  const h = harness('orb', fixture()); await flush();
+  assert.equal(h.text().trim(), '54%');
+  assert.match(h.node('orb').title, /Spark · 官方窗口：剩余 54%（Codex 剩余）\n.*重置\n点击查看 · 拖动移动/);
+  assert.equal(h.node('orb')['aria-label'], h.node('orb').title.replace(/\n/g, '；'));
+  h.node('orb').dispatch('pointerenter');
+  assert.equal(h.text().trim(), '54%', 'hover never inserts labels or a countdown into the circle');
+});
+
+test('orb ignores native material and panel tint hints while unknown or stale quota stays accessible', async () => {
   const state = fixture({ appearance: { nativeBackdrop: true, orbNativeBackdrop: false } });
   const h = harness('orb', state); await flush();
   assert.equal(h.document.body.classList.contains('native-backdrop'), false, 'panel acrylic is not orb acrylic');
   h.change({ ...state, appearance: { orbNativeBackdrop: true }, settings: { ...state.settings, glassTint: 0 } });
-  assert.equal(h.document.body.classList.contains('native-backdrop'), true);
-  assert.equal(h.document.body.style['--glass-tint'], '0%');
-  for (const glassTint of [-1, 71, 1.2, '20', NaN]) {
-    h.change({ ...state, settings: { ...state.settings, glassTint } });
-    assert.equal(h.document.body.style['--glass-tint'], '16%');
-  }
+  assert.equal(h.document.body.classList.contains('native-backdrop'), false);
+  assert.equal(h.document.body.style['--glass-tint'], undefined);
   h.change({ ...state, error: 'failed', appearance: { highContrast: true, reducedTransparency: true } });
   assert.equal(h.node('orb-value').textContent, '54%');
   assert.match(h.node('orb')['aria-label'], /Spark.*剩余 54%.*上次记录/);

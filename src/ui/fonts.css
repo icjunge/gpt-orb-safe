@@ -1,0 +1,12 @@
+/* Inter is bundled under the SIL Open Font License; no runtime font download. */
+@font-face {
+  font-family: "Inter";
+  src: url("../../assets/fonts/InterVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  font-optical-sizing: auto;
+}

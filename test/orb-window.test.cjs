@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {COMPACT_SIZE,EXPANDED_SIZE,circleShape,createOrbController}=require('../src/orb-window.cjs');
 
-function host({bounds={x:400,y:300,width:64,height:64},platform='win32',shapeFails=false}={}){
+function host({bounds={x:400,y:300,width:48,height:48},platform='win32',shapeFails=false}={}){
   const calls={bounds:[],shapes:[]};
   const win={bounds:{...bounds},destroyed:false,isDestroyed(){return this.destroyed;},
     getBounds(){return{...this.bounds};},setBounds(value){this.bounds={...value};calls.bounds.push(value);},
@@ -31,38 +31,38 @@ test('circle hit regions cover precisely the circular pixel centers and merge id
     }
     assert.equal(occupied.has('0,0'),false,'square corners must pass through to the underlying app');
   }
-  for(const invalid of [0,-1,105,Infinity,64.5,'64'])assert.throws(()=>circleShape(invalid),RangeError);
+  for(const invalid of [0,-1,57,Infinity,48.5,'48'])assert.throws(()=>circleShape(invalid),RangeError);
 });
 
 test('hover requests use only fixed sizes, preserve the center and ignore repeated requests',()=>{
   const {win,calls,controller}=host();
   assert.deepEqual(controller.request({expanded:true}),{ok:true,expanded:true});
-  assert.deepEqual(win.bounds,{x:380,y:280,width:104,height:104});
+  assert.deepEqual(win.bounds,{x:396,y:296,width:56,height:56});
   assert.equal(calls.shapes.length,2);
   for(let i=0;i<10;i++)controller.request({expanded:true});
   assert.equal(calls.bounds.length,1);
   assert.equal(calls.shapes.length,2,'no repeated region work at the same size and display DPI');
   controller.request({expanded:false});
-  assert.deepEqual(win.bounds,{x:400,y:300,width:64,height:64});
+  assert.deepEqual(win.bounds,{x:400,y:300,width:48,height:48});
 });
 
 test('screen edges do not make repeated hover cycles drift, including negative display coordinates',()=>{
-  for(const original of [{x:0,y:0,width:64,height:64},{x:1856,y:1016,width:64,height:64}]){
+  for(const original of [{x:0,y:0,width:48,height:48},{x:1872,y:1032,width:48,height:48}]){
     const {win,controller}=host({bounds:original});
     for(let i=0;i<40;i++){
       controller.request({expanded:true});
-      assert.ok(win.bounds.x>=0&&win.bounds.y>=0&&win.bounds.x+104<=1920&&win.bounds.y+104<=1080);
+      assert.ok(win.bounds.x>=0&&win.bounds.y>=0&&win.bounds.x+56<=1920&&win.bounds.y+56<=1080);
       controller.beginDrag();controller.endDrag();
       controller.request({expanded:false});
       assert.deepEqual(win.bounds,original);
     }
   }
-  const {win,display,controller}=host({bounds:{x:-1920,y:-100,width:64,height:64}});
+  const {win,display,controller}=host({bounds:{x:-1920,y:-100,width:48,height:48}});
   display.workArea={x:-1920,y:-200,width:1920,height:1080};
   controller.request({expanded:true});
-  assert.deepEqual(win.bounds,{x:-1920,y:-120,width:104,height:104});
+  assert.deepEqual(win.bounds,{x:-1920,y:-104,width:56,height:56});
   controller.request({expanded:false});
-  assert.deepEqual(win.bounds,{x:-1920,y:-100,width:64,height:64});
+  assert.deepEqual(win.bounds,{x:-1920,y:-100,width:48,height:48});
 });
 
 test('dragging freezes native size and applies only the last hover request at the new center',()=>{
@@ -72,12 +72,12 @@ test('dragging freezes native size and applies only the last hover request at th
   assert.deepEqual(controller.request({expanded:false}),{ok:true,expanded:true,queued:true});
   controller.request({expanded:true});controller.request({expanded:false});
   assert.equal(calls.bounds.length,changes);
-  win.bounds={x:700,y:500,width:104,height:104};
+  win.bounds={x:700,y:500,width:56,height:56};
   assert.deepEqual(controller.endDrag(),{ok:true,expanded:false});
-  assert.deepEqual(win.bounds,{x:720,y:520,width:64,height:64});
-  assert.deepEqual(controller.compactPosition(),{x:720,y:520});
+  assert.deepEqual(win.bounds,{x:704,y:504,width:48,height:48});
+  assert.deepEqual(controller.compactPosition(),{x:704,y:504});
   controller.request({expanded:true});
-  assert.deepEqual(controller.compactPosition(),{x:720,y:520},'saving an expanded drag must restore the compact center next launch');
+  assert.deepEqual(controller.compactPosition(),{x:704,y:504},'saving an expanded drag must restore the compact center next launch');
 });
 
 test('display DPI changes reapply the region without a resize and disconnected displays clamp the full orb',()=>{
@@ -88,9 +88,9 @@ test('display DPI changes reapply the region without a resize and disconnected d
   controller.request({expanded:true});
   display.id=2;display.workArea={x:-1280,y:0,width:1280,height:720};
   controller.syncDisplay();
-  assert.deepEqual(win.bounds,{x:-104,y:280,width:104,height:104});
+  assert.deepEqual(win.bounds,{x:-56,y:296,width:56,height:56});
   controller.request({expanded:false});
-  assert.deepEqual(win.bounds,{x:-84,y:300,width:64,height:64});
+  assert.deepEqual(win.bounds,{x:-52,y:300,width:48,height:48});
 });
 
 test('invalid expansion payloads cannot choose bounds, and native region failures remain cosmetic',()=>{
@@ -101,7 +101,7 @@ test('invalid expansion payloads cannot choose bounds, and native region failure
     assert.deepEqual(controller.request(payload),{ok:false});assert.deepEqual(win.bounds,before);
   }
   assert.deepEqual(controller.request({expanded:true}),{ok:true,expanded:true});
-  assert.equal(win.bounds.width,104);assert.ok(calls.shapes.length>=2);
+  assert.equal(win.bounds.width,56);assert.ok(calls.shapes.length>=2);
   win.destroyed=true;
   assert.deepEqual(controller.request({expanded:false}),{ok:false});
   assert.doesNotThrow(()=>controller.syncDisplay());

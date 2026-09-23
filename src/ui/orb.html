@@ -5,20 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>GPT Orb</title>
+  <link rel="stylesheet" href="fonts.css">
   <link rel="stylesheet" href="orb.css">
 </head>
 <body>
   <button id="orb" class="orb" aria-label="打开 GPT 用量面板" title="点击查看用量 · 拖动移动">
-    <svg class="ring" viewBox="0 0 104 104" aria-hidden="true">
-      <circle class="ring-track" cx="52" cy="52" r="47"></circle>
-      <circle id="progress" class="ring-progress" cx="52" cy="52" r="47"></circle>
-    </svg>
-    <span class="orb-core">
-      <span id="orb-label" class="orb-label"></span>
-      <span id="orb-value" class="orb-value">—</span>
-      <span id="orb-unit" class="orb-unit">待连接</span>
-      <span id="reset" class="reset">点击查看</span>
-    </span>
+    <span id="orb-value" class="orb-value">—</span>
   </button>
   <script src="orb.js"></script>
 </body>

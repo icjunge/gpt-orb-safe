@@ -43,7 +43,7 @@ if(!process.versions.electron){
       delete env.ELECTRON_RUN_AS_NODE;
       const result=spawnSync(path.join(temporary,'GPT-Orb.exe'),[],{env,stdio:'inherit',timeout:remainingMs,windowsHide:false});
       if(result.error?.code==='ETIMEDOUT'){
-        writeReport({status:'unverified',reason:'The CI desktop/compositor did not complete within 50 seconds.'});
+        writeReport({status:'unverified',reason:'The CI desktop/compositor did not complete within 48 seconds.'});
       }else if(result.error){throw result.error;}
       else if(result.status!==0){process.exitCode=result.status||1;}
       else if(!fs.existsSync(path.join(output,'diagnostic.json'))){
@@ -56,20 +56,18 @@ if(!process.versions.electron){
 }else{
   const {app,BrowserWindow,desktopCapturer,ipcMain,nativeTheme,screen,session}=require('electron');
   const {COMPACT_SIZE,EXPANDED_SIZE,circleShape,createOrbController}=require('../src/orb-window.cjs');
-  const {supportsAcrylic,applyOrbMaterial}=require('../src/window-material.cjs');
+  const {applyOrbMaterial}=require('../src/window-material.cjs');
   const report={
-    schema:2,status:'unverified',environment:'Windows CI virtual machine, not the user’s hardware',
+    schema:3,status:'unverified',environment:'Windows CI virtual machine, not the user’s hardware',
     scope:'Inactive, always-on-top shaped HWND over a separate synthetic background window',
-    limitation:'A requested acrylic API call is not proof of blur; desktop pixels, focus and background response are checked separately.',
-    captureLimitation:'Screen capture or VM policies may affect system materials. Negative evidence here does not establish appearance on an uncaptured physical desktop.',
-    layeredControlLimitation:'SetOpacity(1) requests WS_EX_LAYERED but does not remove WS_EX_NOREDIRECTIONBITMAP or prove Chromium changed its compositor backend; native style bits are recorded.',
+    limitation:'Checks visible alpha transparency and circular clipping only. Alpha transparency does not diffuse or blur the background.',
+    captureLimitation:'Unavailable or incomplete VM desktop capture remains unverified. Captured pixels are not a guarantee for another device.',
     os:{platform:process.platform,release:os.release()},versions:{electron:process.versions.electron,chrome:process.versions.chrome},
     windows:[],captures:[],evidence:[],controls:[]
   };
   app.setPath('userData',process.env.GPT_ORB_BACKDROP_PROFILE);
   nativeTheme.themeSource='dark';
   const desktopBudget=Math.min(46000,Number(process.env.GPT_ORB_BACKDROP_TIMEOUT_MS)||46000);
-  const desktopDeadline=Date.now()+desktopBudget;
   const timer=setTimeout(()=>finish('unverified','The fixture exceeded its bounded desktop deadline.'),desktopBudget);
   let background,orb,controller,nativeProbe,finished=false;
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -113,12 +111,11 @@ if(!process.versions.electron){
       }catch(error){fail(error);}
     });
     const api={
-      query:async(window,label,{experimentAccentBlur=false,experimentAccentAcrylic=false}={})=>{
+      query:async(window,label)=>{
         const key=`${++sequence}-${label}`,handle=window.getNativeWindowHandle();
         const handleHex=(handle.length===8?handle.readBigUInt64LE():BigInt(handle.readUInt32LE())).toString(16);
         const response=pending(key);
-        child.stdin.write(JSON.stringify({label:key,handleHex,...(experimentAccentBlur?{experimentAccentBlur:true}:{}),
-          ...(experimentAccentAcrylic?{experimentAccentAcrylic:true}:{})})+'\n');
+        child.stdin.write(JSON.stringify({label:key,handleHex})+'\n');
         return response;
       },
       stop(){stopped=true;child.stdin.end();child.kill();}
@@ -131,8 +128,8 @@ if(!process.versions.electron){
 
   const html='<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><style>html,body{margin:0;overflow:hidden}canvas{display:block}</style><canvas width="480" height="360"></canvas>';
   async function paint(phase,focusWindow=background){
-    // The two backgrounds have the same fine stripes but very different broad
-    // colors. Alpha alone attenuates both; blur suppresses stripes more strongly.
+    // The independent background keeps fine stripes while broad colors change.
+    // Alpha should attenuate both similarly; a solid fill must not respond.
     await background.webContents.executeJavaScript(`(() => {
       const c=document.querySelector('canvas'),g=c.getContext('2d');
       g.fillStyle=${JSON.stringify(phase?'rgb(38,106,222)':'rgb(216,64,56)')};g.fillRect(0,0,480,360);
@@ -154,7 +151,7 @@ if(!process.versions.electron){
     if(!source||source.thumbnail.isEmpty())throw new CaptureUnavailable('The CI desktop returned no matching screen pixels.');
     const actual=source.thumbnail.getSize();
     const scaleX=actual.width/display.bounds.width,scaleY=actual.height/display.bounds.height;
-    if(actual.width<display.bounds.width/2||actual.height<display.bounds.height/2)throw new CaptureUnavailable('The CI desktop thumbnail is too small for a blur diagnostic.');
+    if(actual.width<display.bounds.width/2||actual.height<display.bounds.height/2)throw new CaptureUnavailable('The CI desktop thumbnail is too small for a transparency diagnostic.');
     const bounds=background.getContentBounds();
     const crop={x:Math.round((bounds.x-display.bounds.x)*scaleX),y:Math.round((bounds.y-display.bounds.y)*scaleY),
       width:Math.round(bounds.width*scaleX),height:Math.round(bounds.height*scaleY)};
@@ -184,8 +181,11 @@ if(!process.versions.electron){
   function patch(image,size){
     const {orbBounds,backgroundBounds}=image.state;
     const center={x:orbBounds.x-backgroundBounds.x+orbBounds.width/2,y:orbBounds.y-backgroundBounds.y+orbBounds.height/2};
-    const rows=size===COMPACT_SIZE?[-21,-20,-19]:[-40,-39,-38];
-    const half=size===COMPACT_SIZE?15:21;
+    // Sample a patch inside the circle's upper arc, clear of its border and
+    // centered percentage. Scaled offsets work for both 48px and 56px windows.
+    const radius=size/2;
+    const rows=[...new Set([-.76,-.72,-.68].map(ratio=>Math.round(radius*ratio)))];
+    const half=Math.max(3,Math.floor(radius*.38));
     const values=[];let difference=0,pairs=0;
     for(const row of rows){let previous;
       for(let x=-half;x<=half;x++){
@@ -197,7 +197,7 @@ if(!process.versions.electron){
     return{mean:[0,1,2].map(channel=>values.reduce((sum,value)=>sum+value[channel],0)/values.length),fineContrast:difference/pairs};
   }
   const distance=(a,b)=>a.reduce((sum,value,i)=>sum+Math.abs(value-b[i]),0)/3;
-  function compare(size,a,b,baseA,baseB,{active=false,expectShape=true}={}){
+  function compare(size,a,b,baseA,baseB){
     // Baseline samples use the same size's bounds even though the orb is hidden.
     const baseFor=(base,view)=>({...base,state:{...base.state,orbBounds:view.state.orbBounds}});
     const observed=[patch(a,size),patch(b,size)],baseline=[patch(baseFor(baseA,a),size),patch(baseFor(baseB,b),size)];
@@ -205,25 +205,37 @@ if(!process.versions.electron){
     const observedColorChange=distance(observed[0].mean,observed[1].mean);
     const fineTransfer=(observed[0].fineContrast+observed[1].fineContrast)/Math.max(1,baseline[0].fineContrast+baseline[1].fineContrast);
     const colorTransfer=observedColorChange/Math.max(1,backgroundColorChange);
-    const blurRelativeToTint=fineTransfer/Math.max(.01,colorTransfer);
-    const focusCorrect=[a,b].every(view=>active?!view.state.backgroundFocused&&view.state.orbFocused:view.state.backgroundFocused&&!view.state.orbFocused);
-    const cornerDifference=(view,base)=>{
+    const stripeToColorTransfer=fineTransfer/Math.max(.01,colorTransfer);
+    const focusCorrect=[a,b].every(view=>view.state.backgroundFocused&&!view.state.orbFocused&&view.state.orbVisible);
+    const cornerDifferences=(view,base)=>{
       const left=view.state.orbBounds.x-view.state.backgroundBounds.x,top=view.state.orbBounds.y-view.state.backgroundBounds.y;
       const {width,height}=view.state.orbBounds;
-      return[[4,4],[width-5,4],[4,height-5],[width-5,height-5]].reduce((sum,[x,y])=>
-        sum+distance(pixel(view,left+x,top+y),pixel(base,left+x,top+y)),0)/4;
+      // Every sample is within the outermost 2 DIP of its square window corner,
+      // safely outside the 48/56px circle, including its antialiased border.
+      return[[1,1],[width-2,1],[1,height-2],[width-2,height-2]].map(([x,y])=>
+        distance(pixel(view,left+x,top+y),pixel(base,left+x,top+y)));
     };
-    const clippedCornerDifference=[cornerDifference(a,baseA),cornerDifference(b,baseB)];
+    const clippedCornerDifferences=[cornerDifferences(a,baseA),cornerDifferences(b,baseB)];
     const baselineValid=backgroundColorChange>35&&baseline.every(value=>value.fineContrast>5);
     const orbPixelsObserved=baselineValid&&observed.every((value,index)=>
       distance(value.mean,baseline[index].mean)>5||Math.abs(value.fineContrast-baseline[index].fineContrast)>3);
-    // Unchanged desktop pixels cannot establish a clipped circle: the entire
-    // fixture might be absent from capture, as on the Windows 11 hosted runner.
-    const shapeClipObserved=baselineValid&&orbPixelsObserved?clippedCornerDifference.every(value=>value<5):null;
-    const evidence=baselineValid&&focusCorrect&&(!expectShape||shapeClipObserved===true)&&observedColorChange>5&&blurRelativeToTint<.45;
-    return{size,focusCorrect,baselineValid,orbPixelsObserved,shapeClipObserved,baseline,observed,backgroundColorChange,observedColorChange,fineTransfer,colorTransfer,blurRelativeToTint,clippedCornerDifference,
-      result:evidence?'diffused-background-response-observed':'unverified',
-      note:'Heuristic evidence from synthetic desktop pixels, not a guarantee for another Windows device or system policy.'};
+    // Unchanged desktop pixels cannot establish clipping: the entire fixture
+    // can be absent from the capture on a hosted Windows 11 session.
+    const shapeClipObserved=baselineValid&&orbPixelsObserved?clippedCornerDifferences.flat().every(value=>value<5):null;
+    const alphaResponseObserved=baselineValid&&orbPixelsObserved&&observedColorChange>5&&
+      colorTransfer>.1&&colorTransfer<.98&&stripeToColorTransfer>.75&&stripeToColorTransfer<1.25;
+    return{size,focusCorrect,baselineValid,orbPixelsObserved,shapeClipObserved,alphaResponseObserved,
+      baseline,observed,backgroundColorChange,observedColorChange,fineTransfer,colorTransfer,stripeToColorTransfer,clippedCornerDifferences};
+  }
+
+  function nativeCircleObserved(native){
+    const contains=native?.region?.contains;
+    return native?.region?.result===3&&contains?.center===true&&
+      ['topLeft','topRight','bottomLeft','bottomRight'].every(key=>contains[key]===false);
+  }
+
+  function nativeAlphaHostObserved(native){
+    return native?.systemBackdrop?.hresult===0&&native.systemBackdrop.value===1&&native.styles?.layered===true;
   }
 
   function watch(window){
@@ -231,58 +243,37 @@ if(!process.versions.electron){
     window.webContents.on('console-message',details=>{if(details.level==='error')finish('error','Fixture renderer reported an error.',new Error(details.message));});
   }
 
-  async function makeControl({panel=false,layered=false,legacyLayered=false,shape=false,solid=false}={}){
+  async function makeControl({solid=false}={}){
     const center={x:background.getBounds().x+240,y:background.getBounds().y+170};
-    const width=panel?340:EXPANDED_SIZE,height=panel?240:EXPANDED_SIZE;
-    const window=new BrowserWindow({x:center.x-width/2,y:center.y-height/2,width,height,show:false,frame:false,
-      transparent:layered,backgroundColor:solid?'#171b22':'#00000000',
-      ...(panel?{roundedCorners:true,hasShadow:true}:{thickFrame:false,roundedCorners:false,hasShadow:false}),
+    const size=EXPANDED_SIZE;
+    const window=new BrowserWindow({x:center.x-size/2,y:center.y-size/2,width:size,height:size,show:false,frame:false,
+      transparent:true,backgroundColor:'#00000000',thickFrame:false,roundedCorners:false,hasShadow:false,
       resizable:false,maximizable:false,minimizable:false,fullscreenable:false,skipTaskbar:true,
       webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
     watch(window);
-    if(shape)window.setShape(circleShape(EXPANDED_SIZE));
-    let material={orbNativeBackdrop:false,orbBackdropStatus:'none'};
-    if(!layered&&!solid)material=applyOrbMaterial(window,{platform:process.platform,release:os.release(),theme:nativeTheme,nativeHost:!layered});
-    else{
-      // The constructor's default is not DWMSBT_NONE; query must confirm value 1.
-      window.setBackgroundMaterial('none');
-      window.setBackgroundColor(solid?'#171b22':'#00000000');
-    }
-    // Electron 44 transparent:true uses DirectComposition without WS_EX_LAYERED.
-    // Only this explicit test control requests the legacy layered HWND path.
-    if(legacyLayered)window.setOpacity(1);
+    window.setShape(circleShape(size));
+    applyOrbMaterial(window,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    window.setOpacity(1);
     window.setAlwaysOnTop(true,'floating');
-    const fill=solid?'#171b22':'rgba(18,22,27,.16)';
-    const radius=shape||layered?'50%':panel?'8px':'0';
-    const page=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}.surface{width:100%;height:100%;display:grid;place-items:center;background:${fill};border-radius:${radius};color:white;font:26px 'Segoe UI';box-sizing:border-box}</style><div class="surface">64%</div>`;
+    const fill=solid?'#171b22':'rgba(18,22,27,.22)';
+    const page=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}.surface{width:100%;height:100%;background:${fill};border-radius:50%}</style><div class="surface"></div>`;
     await window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(page));
-    return{window,material};
+    return window;
   }
 
-  async function runControl(name,view,baseA,baseB,{active=false,shape=false,forceShape=false,experimentAccentBlur=false,
-    experimentAccentAcrylic=false,requireNone=false,requireLayered=false,material}={}){
-    view.showInactive();
-    (active?view:background).focus();
-    await pause(300);
-    const before=await nativeProbe.query(view,`${name}-before`);
-    if((requireNone&&(before.systemBackdrop?.hresult!==0||before.systemBackdrop?.value!==1))||
-       (requireLayered&&before.styles?.layered!==true)){
-      const result={name,status:'not-measured',reason:'The required native NONE/layered control state was not established.',nativeBefore:before};
-      report.controls.push(result);console.log(`Native backdrop control: ${JSON.stringify(result)}`);
-      view.hide();background.focus();return result;
-    }
-    if(forceShape)view.setShape(circleShape(view.getBounds().width));
-    const native=forceShape||experimentAccentBlur||experimentAccentAcrylic?await nativeProbe.query(view,`${name}-after`,
-      {experimentAccentBlur,experimentAccentAcrylic}):before;
-    await pause(180);
-    await paint(0,active?view:background);const a=await capture(`${name}-a`,view,{logImage:true});
-    await paint(1,active?view:background);const b=await capture(`${name}-b`,view,{logImage:true});
-    const metrics=compare(view.getBounds().width===COMPACT_SIZE?COMPACT_SIZE:EXPANDED_SIZE,a,b,baseA,baseB,{active,expectShape:shape});
-    const result={name,active,shape,forceShape,experimental:experimentAccentBlur||experimentAccentAcrylic,requireNone,requireLayered,
-      material,nativeBefore:before,nativeAfter:native,metrics};
+  async function runControl(name,view,baseA,baseB){
+    const focusBefore=background.isFocused();
+    view.showInactive();await pause(200);
+    const showInactivePreservedFocus=focusBefore&&background.isFocused()&&!view.isFocused();
+    const native=await nativeProbe.query(view,name);
+    await paint(0);const a=await capture(`${name}-a`,view,{logImage:true});
+    await paint(1);const b=await capture(`${name}-b`,view,{logImage:true});
+    const metrics=compare(EXPANDED_SIZE,a,b,baseA,baseB);
+    const result={name,showInactivePreservedFocus,native,nativeCircleObserved:nativeCircleObserved(native),
+      nativeAlphaHostObserved:nativeAlphaHostObserved(native),metrics};
     report.controls.push(result);
     console.log(`Native backdrop control: ${JSON.stringify(result)}`);
-    view.hide();background.focus();
+    view.hide();view.destroy();
     return result;
   }
 
@@ -299,14 +290,14 @@ if(!process.versions.electron){
     background=new BrowserWindow({...position,width:480,height:360,show:false,frame:false,resizable:false,backgroundColor:'#242424',
       webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
     orb=new BrowserWindow({x:position.x+240-COMPACT_SIZE/2,y:position.y+170-COMPACT_SIZE/2,width:COMPACT_SIZE,height:COMPACT_SIZE,
-      show:false,frame:false,transparent:!supportsAcrylic(process.platform,os.release()),backgroundColor:'#00000000',thickFrame:false,roundedCorners:false,
+      show:false,frame:false,transparent:true,backgroundColor:'#00000000',thickFrame:false,roundedCorners:false,
       resizable:false,maximizable:false,minimizable:false,fullscreenable:false,hasShadow:false,skipTaskbar:true,
       webPreferences:{preload:path.join(__dirname,'render-preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
     controller=createOrbController(orb,screen,{platform:process.platform});
-    const appearance=applyOrbMaterial(orb,{platform:process.platform,release:os.release(),theme:nativeTheme,
-      nativeHost:supportsAcrylic(process.platform,os.release())});
+    const appearance=applyOrbMaterial(orb,{platform:process.platform,release:os.release(),theme:nativeTheme});
+    orb.setOpacity(1);
     report.material=appearance;
-    report.windows={transparent:!appearance.orbNativeHost,alwaysOnTop:true,showMethod:'showInactive',setOpacityCalled:false,
+    report.windows={transparent:true,alwaysOnTop:true,showMethod:'showInactive',setOpacityCalled:true,opacity:1,
       compactShapeRectangles:circleShape(COMPACT_SIZE).length,expandedShapeRectangles:circleShape(EXPANDED_SIZE).length};
     orb.setAlwaysOnTop(true,'floating');
     const now=Date.now();
@@ -320,63 +311,49 @@ if(!process.versions.electron){
     for(const window of[background,orb])watch(window);
     await background.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(html));
     await orb.loadFile(path.join(root,'src','ui','orb.html'));
+    report.fonts=await orb.webContents.executeJavaScript(`(async()=>{
+      const value=document.querySelector('.orb-value');
+      for(let attempt=0;attempt<40&&value.textContent!=='64%';attempt++)await new Promise(resolve=>setTimeout(resolve,25));
+      await document.fonts.ready;
+      return{status:document.fonts.status,family:getComputedStyle(value).fontFamily,percentage:value.textContent};
+    })()`);
     background.show();background.focus();
     await paint(0);const baselineA=await capture('background-a');
-    orb.showInactive();background.focus();await pause(450);
+    const focusBefore=background.isFocused();
+    orb.showInactive();await pause(450);
+    report.showInactivePreservedFocus=focusBefore&&background.isFocused()&&!orb.isFocused();
     report.productionCompactNative=await nativeProbe.query(orb,'production-compact');
     const compactA=await capture('compact-a',orb,{logImage:true});
     controller.request({expanded:true});await pause(450);
     report.productionExpandedNative=await nativeProbe.query(orb,'production-expanded');
     const expandedA=await capture('expanded-a',orb,{logImage:true});
-    await paint(1);const expandedB=await capture('expanded-b');
+    await paint(1);const expandedB=await capture('expanded-b',orb,{logImage:true});
     controller.request({expanded:false});await pause(450);const compactB=await capture('compact-b',orb,{logImage:true});
     orb.hide();await pause(350);const baselineB=await capture('background-b');
-    report.evidence=[compare(COMPACT_SIZE,compactA,compactB,baselineA,baselineB),compare(EXPANDED_SIZE,expandedA,expandedB,baselineA,baselineB)];
-    await runControl('force-region-after-show',orb,baselineA,baselineB,{shape:true,forceShape:true,material:appearance});
-    const plain=await makeControl();
-    await runControl('plain-acrylic-inactive',plain.window,baselineA,baselineB,{material:plain.material});
-    await runControl('plain-acrylic-active',plain.window,baselineA,baselineB,{active:true,material:plain.material});
-    plain.window.destroy();
-    const panel=await makeControl({panel:true});
-    await runControl('panel-acrylic-inactive',panel.window,baselineA,baselineB,{material:panel.material});
-    panel.window.destroy();
-    const solid=await makeControl({shape:true,solid:true});
-    await runControl('shape-none-solid',solid.window,baselineA,baselineB,{shape:true,forceShape:true,requireNone:true,material:solid.material});
-    solid.window.destroy();
-    const layered=await makeControl({layered:true});
-    await runControl('transparent-dcomp-css-alpha',layered.window,baselineA,baselineB,{shape:true,requireNone:true,material:layered.material});
-    layered.window.destroy();
-    const legacy=await makeControl({layered:true,legacyLayered:true,shape:true});
-    await runControl('legacy-layered-css-alpha',legacy.window,baselineA,baselineB,
-      {shape:true,forceShape:true,requireNone:true,requireLayered:true,material:legacy.material});
-    // This optional fixed SWCA experiment changes only this synthetic HWND.
-    // Its return value is recorded, never treated as evidence of visible blur.
-    await runControl('experimental-layered-accent-blur',legacy.window,baselineA,baselineB,
-      {shape:true,forceShape:true,requireNone:true,requireLayered:true,experimentAccentBlur:true,material:legacy.material});
-    legacy.window.destroy();
-    if(desktopDeadline-Date.now()>5500){
-      const acrylic=await makeControl({layered:true,legacyLayered:true,shape:true});
-      await runControl('experimental-layered-accent-acrylic',acrylic.window,baselineA,baselineB,
-        {shape:true,forceShape:true,requireNone:true,requireLayered:true,experimentAccentAcrylic:true,material:acrylic.material});
-      acrylic.window.destroy();
-    }else{
-      const result={name:'experimental-layered-accent-acrylic',status:'not-measured',reason:'Insufficient remaining desktop diagnostic budget.'};
-      report.controls.push(result);console.log(`Native backdrop control: ${JSON.stringify(result)}`);
-    }
+    report.evidence=[
+      {...compare(COMPACT_SIZE,compactA,compactB,baselineA,baselineB),nativeCircleObserved:nativeCircleObserved(report.productionCompactNative),
+        nativeAlphaHostObserved:nativeAlphaHostObserved(report.productionCompactNative)},
+      {...compare(EXPANDED_SIZE,expandedA,expandedB,baselineA,baselineB),nativeCircleObserved:nativeCircleObserved(report.productionExpandedNative),
+        nativeAlphaHostObserved:nativeAlphaHostObserved(report.productionExpandedNative)}
+    ];
+    const solid=await runControl('opaque-circle',await makeControl({solid:true}),baselineA,baselineB);
+    const alpha=await runControl('alpha-circle',await makeControl(),baselineA,baselineB);
+    const controlValid=control=>control.showInactivePreservedFocus&&control.nativeCircleObserved&&control.nativeAlphaHostObserved&&
+      control.metrics.baselineValid&&control.metrics.focusCorrect&&control.metrics.orbPixelsObserved&&control.metrics.shapeClipObserved===true;
     report.validation={
       backgroundCalibrationValid:report.evidence.every(item=>item.baselineValid),
-      alphaPositiveControlValid:report.controls.some(control=>
-        ['transparent-dcomp-css-alpha','legacy-layered-css-alpha'].includes(control.name)&&
-        control.metrics?.baselineValid&&control.metrics.focusCorrect&&control.metrics.shapeClipObserved===true&&
-        control.metrics.observedColorChange>5&&control.metrics.blurRelativeToTint>.75)
+      opaqueNegativeControlValid:controlValid(solid)&&solid.metrics.observedColorChange<2&&solid.metrics.colorTransfer<.03,
+      alphaPositiveControlValid:controlValid(alpha)&&alpha.metrics.alphaResponseObserved
     };
-    if(!report.validation.backgroundCalibrationValid||!report.validation.alphaPositiveControlValid){
-      finish('unverified','Synthetic background or alpha controls were not established in captured pixels; neither blur nor visual clipping can be inferred.');
+    if(!Object.values(report.validation).every(Boolean)){
+      finish('unverified','Synthetic background, opaque-circle or alpha-circle controls were not established; transparent clipping cannot be inferred from this capture.');
       return;
     }
-    const observed=appearance.orbNativeBackdrop&&report.dwm.hresult===0&&report.dwm.enabled===true&&report.evidence.every(item=>item.result==='diffused-background-response-observed');
+    const observed=report.showInactivePreservedFocus&&report.fonts.status==='loaded'&&report.fonts.percentage==='64%'&&
+      report.evidence.every(item=>item.focusCorrect&&item.orbPixelsObserved&&item.shapeClipObserved===true&&
+        item.nativeCircleObserved&&item.nativeAlphaHostObserved&&item.alphaResponseObserved);
     finish(observed?'observed-on-ci':'unverified',observed?
-      'Synthetic background color response and selective stripe suppression were observed while the orb remained inactive on this CI desktop.':
-      'CI did not establish inactive native background blur. Inspect the captures and metrics; requested acrylic alone is not visual verification.');
+      'Both production orb sizes showed background-responsive alpha pixels and clear square corners, with circular native hit regions and no focus activation. This verifies transparency on CI, not blur.':
+      'CI did not establish transparent, square-free inactive production orbs at both sizes. Inspect captured pixels, native region and calibration metrics.');
   }).catch(error=>error instanceof CaptureUnavailable?finish('unverified',error.message):finish('error','Unexpected fixture failure.',error));
 }

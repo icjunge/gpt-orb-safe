@@ -1,8 +1,7 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {EventEmitter}=require('node:events');
-const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial,compositingMode,observeGpuCompositing}=require('../src/window-material.cjs');
+const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial}=require('../src/window-material.cjs');
 
 test('the system backdrop gate excludes Windows 10 and Windows 11 before 22H2',()=>{
   for(const release of ['10.0.19045','10.0.22000','10.0.22620','6.3.9600','unknown','',undefined])
@@ -81,82 +80,28 @@ test('even a destroyed native compositor cannot throw through the cosmetic fallb
   assert.equal(applyPanelMaterial(win,supported).nativeBackdrop,false);
 });
 
-test('only explicit hardware compositor states are hardware; disabled and unknown features cannot opt in',()=>{
-  for(const value of ['enabled','enabled_on','enabled_force','enabled_force_on','enabled_readback'])assert.equal(compositingMode(value),'hardware');
-  for(const value of ['disabled_software','disabled_off','disabled_off_ok','unavailable_software','unavailable_off','unavailable_off_ok'])assert.equal(compositingMode(value),'software');
-  for(const value of [undefined,null,'','enabled_future','unavailable',true,{},[]])assert.equal(compositingMode(value),'unknown');
-});
-
-function gpuHost({request=()=>new Promise(()=>{}),timeoutMs=1200}={}){
-  const app=new EventEmitter(),timers=new Map();
-  let feature,seen=false,reads=0,requests=0,nextTimer=0;
-  app.getGPUFeatureStatus=()=>{assert.equal(seen,true,'the app ready event is not GPU readiness');reads++;return{gpu_compositing:feature};};
-  app.getGPUInfo=type=>{assert.equal(type,'basic');requests++;return request(app);};
-  const probe=observeGpuCompositing(app,{timeoutMs,setTimer:(fn,delay)=>{const id=++nextTimer;timers.set(id,{fn,delay});return id;},clearTimer:id=>timers.delete(id)});
-  return{app,probe,timers,reads:()=>reads,requests:()=>requests,
-    emit(value){feature=value;seen=true;app.emit('gpu-info-update');},
-    expire(){const timer=[...timers.values()][0];assert.ok(timer);timer.fn();}};
-}
-
-test('GPU events before app readiness are retained without making an unnecessary GPU request',async()=>{
-  const h=gpuHost();
-  assert.equal(h.reads(),0);
-  h.emit('enabled');
-  assert.equal(await h.probe.wait(),'hardware');
-  assert.equal(h.requests(),0);
-  assert.equal(h.timers.size,0);assert.equal(h.app.listenerCount('gpu-info-update'),0);
-});
-
-test('GPU status waits for its event even when the basic-info request resolves, and stops on a known update',async()=>{
-  const h=gpuHost({request:()=>Promise.resolve({gpuDevice:[{vendorId:1234}]})});
-  let done=false;const result=h.probe.wait().then(mode=>{done=true;return mode;});
-  await Promise.resolve();await Promise.resolve();
-  assert.equal(done,false);assert.equal(h.reads(),0);
-  h.emit('disabled_software');
-  assert.equal(await result,'software');
-  assert.equal(h.timers.size,0);assert.equal(h.app.listenerCount('gpu-info-update'),0);
-});
-
-test('early and in-flight unknown GPU updates retain the bounded opportunity for a later hardware update',async()=>{
-  for(const early of [true,false]){
-    const h=gpuHost({request:()=>Promise.resolve({})});
-    if(early)h.emit(undefined);
-    let done=false;const result=h.probe.wait().then(mode=>{done=true;return mode;});
-    if(!early)h.emit('future-unrecognized-status');
-    await Promise.resolve();await Promise.resolve();
-    assert.equal(done,false);assert.equal(h.requests(),1);assert.equal(h.timers.size,1);
-    h.emit('enabled');
-    assert.equal(await result,'hardware');assert.equal(h.timers.size,0);
+test('orb always uses a transparent alpha host and never requests Acrylic, even with a legacy nativeHost option',()=>{
+  for(const nativeHost of [undefined,false,true]){
+    const {win,calls}=host();
+    assert.deepEqual(applyOrbMaterial(win,{...supported,nativeHost}),{
+      orbNativeHost:false,orbNativeBackdrop:false,orbBackdropStatus:'unavailable'});
+    assert.deepEqual(calls,[['material','none'],['color','#00000000']]);
+    assert.deepEqual(applyOrbMaterial(win,{...supported,nativeHost,theme:{shouldUseHighContrastColors:true}}),{
+      orbNativeHost:false,orbNativeBackdrop:false,orbBackdropStatus:'reduced-transparency'});
+    assert.deepEqual(calls.slice(-2),[['material','none'],['color','#00000000']]);
   }
 });
 
-test('GPU timeouts, failed requests and unavailable status reads fall back without leaking event listeners',async()=>{
-  const timeout=gpuHost({timeoutMs:99999});
-  const pending=timeout.probe.wait();
-  assert.equal([...timeout.timers.values()][0].delay,1500,'startup can never wait longer than 1.5 seconds');
-  timeout.expire();assert.equal(await pending,'unknown');
-  assert.equal(timeout.app.listenerCount('gpu-info-update'),0);
-  for(const request of [()=>{throw Error('unavailable');},()=>Promise.reject(Error('unavailable'))]){
-    const h=gpuHost({request});
-    assert.equal(await h.probe.wait(),'unknown');assert.equal(h.timers.size,0);
-    assert.equal(h.app.listenerCount('gpu-info-update'),0);
+test('orb transparency survives unavailable backdrop APIs without making a solid rectangular fallback',()=>{
+  const {win,calls}=host({setBackgroundMaterial(){throw Error('DWM unavailable');}});
+  assert.equal(applyOrbMaterial(win,supported).orbNativeBackdrop,false);
+  assert.deepEqual(calls,[['color','#00000000']]);
+  for(const platform of ['linux','darwin']){
+    const {win,calls}=host({setBackgroundMaterial(){assert.fail('unsupported native API');}});
+    assert.equal(applyOrbMaterial(win,{...supported,platform}).orbBackdropStatus,'unsupported');
+    assert.deepEqual(calls,[['color','#00000000']]);
   }
-  const missing=gpuHost();missing.app.getGPUFeatureStatus=()=>{throw Error('not ready');};
-  const wait=missing.probe.wait();missing.emit('enabled');missing.expire();
-  assert.equal(await wait,'unknown');
-  const stopped=gpuHost();const stoppedWait=stopped.probe.wait();stopped.probe.stop();
-  assert.equal(await stoppedWait,'unknown');assert.equal(stopped.timers.size,0);
-});
-
-test('orb material reflects the actual host choice and explicitly clears native backgrounds on an alpha host',()=>{
-  const {win,calls}=host();
-  assert.deepEqual(applyOrbMaterial(win,{...supported,nativeHost:false}),{
-    orbNativeHost:false,orbNativeBackdrop:false,orbBackdropStatus:'unavailable'});
-  assert.deepEqual(calls,[['material','none'],['color','#00000000']]);
-  assert.deepEqual(applyOrbMaterial(win,{...supported,nativeHost:false,theme:{shouldUseHighContrastColors:true}}),{
-    orbNativeHost:false,orbNativeBackdrop:false,orbBackdropStatus:'reduced-transparency'});
-  assert.deepEqual(calls.slice(-2),[['material','none'],['color','#00000000']]);
-  assert.deepEqual(applyOrbMaterial(win,{...supported,nativeHost:true}),{
-    orbNativeHost:true,orbNativeBackdrop:true,orbBackdropStatus:'requested'});
-  assert.deepEqual(calls.slice(-2),[['material','acrylic'],['color','#00000000']]);
+  assert.doesNotThrow(()=>applyOrbMaterial(null,supported));
+  const destroyed=host({isDestroyed:()=>true});
+  applyOrbMaterial(destroyed.win,supported);assert.deepEqual(destroyed.calls,[]);
 });
