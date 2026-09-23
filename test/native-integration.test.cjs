@@ -701,12 +701,12 @@ test('managed connect is panel-only and accepts no renderer supplied login argum
   assert.equal(h.calls.componentDownloads,0);
   assert.equal((await h.action('connectCodex')).ok,true);
   assert.equal(h.calls.componentDownloads,1);assert.equal(h.calls.managedLogins.length,1);
-  assert.equal(h.calls.managedLogins[0].codexHome,'/virtual-orb/user-data/codex-managed-home');
+  assert.equal(h.calls.managedLogins[0].codexHome,path.join('/virtual-orb/user-data','codex-managed-home'));
   assert.equal(h.state().settings.codexEnabled,true);assert.equal(h.state().codexSetup.hasLogin,true);
   assert.equal(h.state().codexSetup.status,'connected');assert.deepEqual(h.provider.starts,[5]);
   assert.equal(h.saved().settings.codexManagedConnected,true);
   const target=await h.provider.options.discover();
-  assert.equal(target.path,'/virtual-orb/managed/codex.exe');assert.equal(target.codexHome,'/virtual-orb/user-data/codex-managed-home');
+  assert.equal(target.path,'/virtual-orb/managed/codex.exe');assert.equal(target.codexHome,path.join('/virtual-orb/user-data','codex-managed-home'));
   assert.equal(h.calls.discover,0);
   assert.equal((await h.action('logoutCodex')).ok,true);
   assert.equal(h.calls.managedLogouts.length,1);assert.equal(h.state().codexSetup.hasLogin,false);
