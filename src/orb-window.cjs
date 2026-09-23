@@ -69,13 +69,14 @@ function createOrbController(win,screen,{platform=process.platform}={}){
       return resize();
     },
     beginDrag(){if(!alive())return;dragging=true;dragBounds=win.getBounds();},
-    endDrag(){
+    endDrag({moved=false}={}){
       if(!alive())return{ok:false};
+      // Only a gesture that crossed the native DIP threshold may commit a new
+      // anchor. Hover resize / compositor bounds changes during a stationary
+      // press are not evidence of dragging. A clamped drag or a drag returning
+      // to its start also retains the original, potentially unclamped anchor.
       const bounds=win.getBounds();
-      // A click also starts/ends pointer capture. If no drag occurred, keep the
-      // unclamped center so clicking an expanded orb at a screen edge cannot
-      // gradually pull its compact position away from that edge.
-      if(dragging&&(bounds.x!==dragBounds.x||bounds.y!==dragBounds.y))center=centerOf(bounds);
+      if(dragging&&moved&&(bounds.x!==dragBounds.x||bounds.y!==dragBounds.y))center=centerOf(bounds);
       dragging=false;dragBounds=null;return resize();
     },
     compactPosition(){

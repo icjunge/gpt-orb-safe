@@ -73,11 +73,43 @@ test('dragging freezes native size and applies only the last hover request at th
   controller.request({expanded:true});controller.request({expanded:false});
   assert.equal(calls.bounds.length,changes);
   win.bounds={x:700,y:500,width:56,height:56};
-  assert.deepEqual(controller.endDrag(),{ok:true,expanded:false});
+  assert.deepEqual(controller.endDrag({moved:true}),{ok:true,expanded:false});
   assert.deepEqual(win.bounds,{x:704,y:504,width:48,height:48});
   assert.deepEqual(controller.compactPosition(),{x:704,y:504});
   controller.request({expanded:true});
   assert.deepEqual(controller.compactPosition(),{x:704,y:504},'saving an expanded drag must restore the compact center next launch');
+});
+
+test('a stationary press never adopts a delayed native bounds change as its anchor',()=>{
+  for(const bounds of [{x:400,y:300,width:48,height:48},{x:0,y:0,width:48,height:48},{x:1872,y:1032,width:48,height:48}]){
+    const {win,controller}=host({bounds});
+    for(let count=0;count<30;count++){
+      controller.request({expanded:true});controller.beginDrag();
+      // A compositor/DPI report changes bounds without a native drag crossing
+      // its threshold. It must not be mistaken for intentional pointer travel.
+      win.bounds.x+=4;win.bounds.y+=4;
+      controller.request({expanded:false});controller.endDrag({moved:false});
+      assert.deepEqual(win.bounds,bounds);
+      assert.deepEqual(controller.compactPosition(),{x:bounds.x,y:bounds.y});
+    }
+  }
+});
+
+test('clamped outer drags and returning drags preserve every original corner anchor',()=>{
+  for(const original of [{x:0,y:0,width:48,height:48},{x:1872,y:0,width:48,height:48},
+    {x:0,y:1032,width:48,height:48},{x:1872,y:1032,width:48,height:48}]){
+    const {win,controller}=host({bounds:original});
+    for(let count=0;count<30;count++){
+      controller.request({expanded:true});controller.beginDrag();
+      const pressBounds={...win.bounds};
+      if(count%2){win.bounds.x+=original.x? -80:80;win.bounds.y+=original.y? -80:80;win.bounds={...pressBounds};}
+      // Pointer travel exceeded the threshold, but the final native position is
+      // unchanged. Never adopt the clamped expanded centre as a new anchor.
+      controller.endDrag({moved:true});controller.request({expanded:false});
+      assert.deepEqual(win.bounds,original);
+      assert.deepEqual(controller.compactPosition(),{x:original.x,y:original.y});
+    }
+  }
 });
 
 test('display DPI changes reapply the region without a resize and disconnected displays clamp the full orb',()=>{

@@ -6,6 +6,7 @@ app.disableHardwareAcceleration();
 const out=process.env.GPT_ORB_RENDER_OUTPUT || path.resolve(__dirname,'../../build/rendered-safe');
 const actions=[];
 const views=[];
+const orbMeasurements=[];
 let settingSaveDelay=0;
 let panelHeightLimit=660;
 let checks=0;
@@ -30,7 +31,19 @@ ipcMain.handle('test:action',async(event,action)=>{
     if(view.autoResize!==false)await resize(view,view.width,Math.min(height,panelHeightLimit));
     return {ok:true};
   }
-  actions.push(action);if(action.name==='setSettings'&&settingSaveDelay)await new Promise(resolve=>setTimeout(resolve,settingSaveDelay));return {ok:true};
+  actions.push(action);
+  // Deterministic stand-in for the trusted host's cursor verdict. These fixture
+  // coordinates exercise the renderer/IPC contract, not native Windows movement.
+  const view=views.find(view=>view.w.webContents===event.sender);
+  if(view?.page==='orb'){
+    if(action.name==='dragStart')view.gesture={start:{...view.pointer},moved:false};
+    if(view.gesture&&['dragMove','dragEnd'].includes(action.name)){
+      if(action.payload?.cancelled!==true&&Math.hypot(view.pointer.x-view.gesture.start.x,view.pointer.y-view.gesture.start.y)>4)view.gesture.moved=true;
+      if(action.name==='dragMove'&&view.gesture.moved)view.nativeMoveCount++;
+      if(action.name==='dragEnd'){const moved=view.gesture.moved;view.gesture=null;return {ok:true,moved};}
+    }
+  }
+  if(action.name==='setSettings'&&settingSaveDelay)await new Promise(resolve=>setTimeout(resolve,settingSaveDelay));return {ok:true};
 });
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function make(page,width,height){
@@ -38,7 +51,7 @@ async function make(page,width,height){
     webPreferences:{preload:path.join(__dirname,'render-preload.cjs'),offscreen:true,contextIsolation:true,sandbox:true}});
   const errors=[];
   w.webContents.on('console-message',(_e,level,message)=>{if(level>=3)errors.push(message);});
-  const view={w,errors,width,height,page,autoResize:true};views.push(view);
+  const view={w,errors,width,height,page,autoResize:true,pointer:{x:0,y:0},nativeMoveCount:0};views.push(view);
   await w.loadFile(path.join(__dirname,'../src/ui',page+'.html'));
   await w.webContents.executeJavaScript('document.fonts.ready.then(()=>true)');
   // Ozone headless can report a 1×1 viewport despite the requested native size.
@@ -56,16 +69,18 @@ async function resize(view,width,height){
 }
 async function change(view,newState){state=newState;view.w.webContents.send('test:update',state);await wait(100);}
 async function run(view,code){return view.w.webContents.executeJavaScript(code);}
-async function input(view,event,delay=40){await view.w.webContents.sendInputEvent(event);await wait(delay);}
+async function input(view,event,delay=40){if(event.type==='mouseMove')view.pointer={x:event.x,y:event.y};await view.w.webContents.sendInputEvent(event);await wait(delay);}
 async function shot(view,name){view.w.webContents.invalidate();await wait(250);const image=await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height});equal(image.getSize().width,view.width);equal(image.getSize().height,view.height);fs.writeFileSync(path.join(out,name),image.toPNG());}
 // Assert the captured compositor pixels, not merely a transparent CSS declaration.
 // This checks renderer alpha only; Windows DWM composition is a separate concern.
 async function orbAlpha(view,name){
   view.w.webContents.invalidate();await wait(100);
   const png=(await view.w.webContents.capturePage({x:0,y:0,width:view.width,height:view.height})).toPNG();
-  const samples=await run(view,`new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const context=canvas.getContext('2d');context.drawImage(img,0,0);resolve([[0,0],[img.width-1,0],[0,img.height-1],[img.width-1,img.height-1],[Math.floor(img.width/2),8]].map(([x,y])=>[...context.getImageData(x,y,1,1).data]));};img.onerror=()=>reject(new Error('Screenshot PNG could not be decoded'));img.src='data:image/png;base64,${png.toString('base64')}';})`);
+  const samples=await run(view,`new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const context=canvas.getContext('2d');context.drawImage(img,0,0);resolve([[0,0],[img.width-1,0],[0,img.height-1],[img.width-1,img.height-1],[Math.floor(img.width/2),8],[Math.floor(img.width/2),1]].map(([x,y])=>[...context.getImageData(x,y,1,1).data]));};img.onerror=()=>reject(new Error('Screenshot PNG could not be decoded'));img.src='data:image/png;base64,${png.toString('base64')}';})`);
   equal(samples.slice(0,4).every(pixel=>pixel[3]===0),true,`${name}: all four captured corners have zero alpha`);
   equal(samples[4][3]>0&&samples[4][3]<128,true,`${name}: the circular fill transmits the background`);
+  equal(samples[5][3]>=samples[4][3]+25,true,`${name}: the glass edge is visibly stronger than the transmissive center`);
+  orbMeasurements.push({name,size:view.width,pixels:{corners:samples.slice(0,4),fill:samples[4],rim:samples[5]}});
   return samples;
 }
 // This fixture tests CSS light transmission, not native Windows backdrop support.
@@ -264,6 +279,29 @@ app.whenReady().then(async()=>{
   await input(orb,{type:'mouseUp',button:'left',clickCount:1});
   equal(actions.slice(clickStart).filter(action=>action.name==='togglePanel').length,1,'one actual pointer click toggles the panel once');
   equal(actions.slice(clickStart).filter(action=>action.name==='dragEnd').length,1,'normal pointer release cleans up capture only once');
+  for(const jitter of [false,true]){
+    const heldStart=actions.length;
+    const moveCount=orb.nativeMoveCount;
+    await input(orb,{type:'mouseDown',button:'left',clickCount:1},1100);
+    if(jitter){
+      for(const [x,y] of [[29,28],[29,29],[27,28],[28,28]])await input(orb,{type:'mouseMove',x,y});
+    }
+    equal(orb.nativeMoveCount,moveCount,`${jitter?'slight jitter':'stationary long press'} respects the host's unmoved verdict`);
+    equal(actions.slice(heldStart).filter(action=>action.name==='orbExpand').length,0,`${jitter?'slight jitter':'stationary long press'} freezes the hover size while held`);
+    equal(actions.slice(heldStart).filter(action=>action.name==='togglePanel').length,0,'holding a press never opens the panel before release');
+    await input(orb,{type:'mouseUp',button:'left',clickCount:1});
+    equal(actions.slice(heldStart).filter(action=>action.name==='togglePanel').length,1,'an unmoved long press releases as one click');
+    equal(actions.slice(heldStart).filter(action=>action.name==='dragEnd').length,1,'an unmoved long press cleans up once');
+  }
+  await run(orb,"document.getElementById('orb').addEventListener('pointerdown',event=>{window.__testPointerId=event.pointerId},{once:true})");
+  const coordinateChangeStart=actions.length,coordinateMoveCount=orb.nativeMoveCount;
+  await input(orb,{type:'mouseDown',button:'left',clickCount:1});
+  // Deliberately disagree with the fixture's unchanged native cursor, as browser
+  // screen coordinates can change when a native window is resized or changes DPI.
+  await run(orb,"document.getElementById('orb').dispatchEvent(new PointerEvent('pointermove',{pointerId:window.__testPointerId,clientX:28,clientY:28,screenX:10000,screenY:10000,buttons:1,bubbles:true}))");
+  await input(orb,{type:'mouseUp',button:'left',clickCount:1});
+  equal(orb.nativeMoveCount,coordinateMoveCount,'browser screen-coordinate changes do not override the host cursor verdict');
+  equal(actions.slice(coordinateChangeStart).filter(action=>action.name==='togglePanel').length,1,'native unmoved verdict remains a click despite changed browser screen coordinates');
   await input(orb,{type:'mouseMove',x:0,y:0},320);
   equal(orb.width,48,'mouse-created focus does not keep a departed orb expanded');
   await input(orb,{type:'mouseMove',x:24,y:24},220);
@@ -434,12 +472,20 @@ app.whenReady().then(async()=>{
   equal(await run(orb,"document.body.classList.contains('native-backdrop')"),false,'panel material status cannot enable an orb native backdrop');
   equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgba(18, 22, 27, 0.22)','percentage orb has a light transparent fill');
   equal(await run(orb,"getComputedStyle(document.getElementById('orb-value')).opacity"),'1','transparent fill keeps the percentage text opaque');
-  for(const usedPercent of [0,100]){
-    await change(orb,{...alphaOrb,snapshot:{...native.snapshot,windows:[{...native.snapshot.windows[0],usedPercent}]}});
-    equal(await run(orb,"document.getElementById('orb-value').textContent"),`${100-usedPercent}%`);
-    equal(await run(orb,"(() => {const rect=document.getElementById('orb-value').getBoundingClientRect();return rect.left>=3&&rect.right<=45;})()"),true,`${100-usedPercent} percent fits the 48 DIP circle with room at both edges`);
-    await shot(orb,usedPercent===0?'orb-compact-full.png':'orb-compact-zero.png');
+  for(const size of [48,56]){
+    await input(orb,{type:'mouseMove',x:size===48?0:24,y:size===48?0:24},320);
+    equal(orb.width,size);
+    for(const usedPercent of [0,36,100,null]){
+      await change(orb,{...alphaOrb,snapshot:usedPercent===null?null:{...native.snapshot,windows:[{...native.snapshot.windows[0],usedPercent}]}});
+      const expected=usedPercent===null?'—':`${100-usedPercent}%`;
+      equal(await run(orb,"document.getElementById('orb-value').textContent"),expected);
+      const measurement=await run(orb,"(() => {const value=document.getElementById('orb-value'),rect=value.getBoundingClientRect(),style=getComputedStyle(value);return {value:value.textContent,left:rect.left,right:innerWidth-rect.right,top:rect.top,bottom:innerHeight-rect.bottom,fontSize:style.fontSize};})()");
+      equal(Math.min(measurement.left,measurement.right)>=6.5,true,`${expected} leaves at least 6.5 DIP on each side at ${size} DIP (${JSON.stringify(measurement)})`);
+      orbMeasurements.push({size,...measurement});
+      await shot(orb,`orb-${size===48?'compact':'hover'}-${usedPercent===null?'unknown':usedPercent===0?'full':usedPercent===100?'zero':'64'}.png`);
+    }
   }
+  await input(orb,{type:'mouseMove',x:0,y:0},320);
   await change(orb,{...alphaOrb,snapshot:null});
   equal(await run(orb,"document.getElementById('orb').innerText.trim()"),'—','unavailable quota displays no misleading percentage');
   match(await run(orb,"document.getElementById('orb').title"),/额度未知/);
@@ -463,5 +509,6 @@ app.whenReady().then(async()=>{
   await shot(updatePreview,'updates-next-ready-demo.png');
   const rendererErrors=views.flatMap(view=>view.errors);
   equal(rendererErrors.length,0,JSON.stringify(rendererErrors));
+  fs.writeFileSync(path.join(out,'orb-renderer-evidence.json'),JSON.stringify({scope:'Real Chromium or Electron renderer only; no Windows desktop composition claim',orbMeasurements,rendererErrors},null,2)+'\n');
   console.log(`Renderer acceptance: ${checks} checks passed; offline fixture screenshots saved.`);app.quit();
 }).catch(error=>{console.error(error.stack);app.exit(1);});

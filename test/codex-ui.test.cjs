@@ -18,7 +18,7 @@ function fixture(overrides = {}) {
     ...overrides
   };
 }
-function harness(page, initial, actionImpl = async () => ({ ok: true })) {
+function harness(page, initial, actionImpl = async name => name === 'dragEnd' ? { ok: true, moved: false } : { ok: true }) {
   const html = fs.readFileSync(path.join(__dirname, '../src/ui', `${page}.html`), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, '../src/ui', `${page}.js`), 'utf8');
   const nodes = new Map(), created = [], calls = [], intervals = [], timeouts = new Map();
@@ -421,8 +421,8 @@ test('orb hover expands once and delayed collapse is cancelled by re-entry or ke
   assert.equal(h.calls.length, 2, 'mouse focus must not keep the orb enlarged');
 });
 
-test('dragging freezes orb size and a move never opens the details panel', async () => {
-  const h = harness('orb', fixture()); await flush();
+test('dragging freezes orb size and trusts the native end result rather than browser screen coordinates', async () => {
+  const h = harness('orb', fixture(), async name => name === 'dragEnd' ? { ok: true, moved: true } : { ok: true }); await flush();
   const orb = h.node('orb'), pointer = { pointerId: 7, button: 0, screenX: 100, screenY: 100 };
   orb.dispatch('pointerenter');
   orb.dispatch('pointerdown', pointer);
@@ -432,32 +432,77 @@ test('dragging freezes orb size and a move never opens the details panel', async
   orb.dispatch('pointerup', { ...pointer, pointerId: 8 });
   assert.equal(h.calls.length, 2, 'unrelated pointers cannot finish the drag');
   orb.dispatch('pointermove', { ...pointer, screenX: 103 });
-  assert.equal(h.calls.length, 2, 'small pointer jitter is still a click');
   orb.dispatch('pointermove', { ...pointer, screenX: 111 });
-  orb.dispatch('pointerup', { ...pointer, screenX: 111 });
-  assert.deepEqual(h.calls.map(call => call.name), ['orbExpand', 'dragStart', 'dragMove', 'dragEnd']);
+  orb.dispatch('pointerup', { ...pointer, screenX: 100 }); await flush();
+  assert.deepEqual(h.calls.map(call => call.name), ['orbExpand', 'dragStart', 'dragMove', 'dragMove', 'dragEnd']);
   assert.equal(orb.capturedPointer, null);
-  assert.equal(h.calls.find(call => call.name === 'dragMove').payload, undefined, 'only main reads real cursor coordinates');
+  assert.ok(h.calls.filter(call => call.name === 'dragMove').every(call => call.payload === undefined), 'only main reads real cursor coordinates');
+  assert.deepEqual(h.calls.at(-1).payload, { cancelled: false });
   h.advance(160);
   assert.deepEqual(h.calls.at(-1), { name: 'orbExpand', payload: { expanded: false } });
 });
 
+test('stationary long press tolerates resize-generated screen coordinates and small native jitter', async () => {
+  let finish;
+  const h = harness('orb', fixture(), name => name === 'dragEnd' ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ ok: true })); await flush();
+  const orb = h.node('orb'), pointer = { pointerId: 7, button: 0, screenX: 100, screenY: 100 };
+  orb.dispatch('pointerenter'); orb.dispatch('pointerdown', pointer);
+  h.advance(60000);
+  orb.dispatch('pointermove', { ...pointer, screenX: 4000, screenY: -2500 });
+  orb.dispatch('pointerleave'); orb.dispatch('pointerenter'); h.advance(1000);
+  orb.dispatch('pointerup', { ...pointer, screenX: -900, screenY: 800 });
+  assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 0, 'click waits for authoritative native result');
+  orb.dispatch('lostpointercapture', pointer); orb.dispatch('pointerup', pointer);
+  orb.dispatch('pointerdown', { ...pointer, pointerId: 8 });
+  assert.equal(h.calls.filter(call => call.name === 'dragStart').length, 1, 'pending end reply cannot race a new gesture');
+  assert.equal(h.calls.filter(call => call.name === 'dragEnd').length, 1);
+  assert.equal(h.calls.filter(call => call.name === 'orbExpand').length, 1, 'hover resize stays frozen during press');
+  finish({ ok: true, moved: false }); await flush();
+  assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 1, 'browser screen coordinates cannot invent a drag');
+});
+
 test('cancelled or lost pointer capture cannot turn into a click and each drag ends once', async () => {
   for (const eventName of ['pointercancel', 'lostpointercapture']) {
-    const h = harness('orb', fixture()); await flush();
+    let moved = false;
+    const h = harness('orb', fixture(), async name => name === 'dragEnd' ? { ok: true, moved } : { ok: true }); await flush();
     const orb = h.node('orb'), pointer = { pointerId: 1, button: 0, screenX: 5, screenY: 5 };
     orb.dispatch('pointerdown', pointer);
     orb.dispatch(eventName, pointer);
     orb.dispatch('pointerup', pointer);
-    orb.dispatch(eventName, pointer);
+    orb.dispatch(eventName, pointer); await flush();
     assert.deepEqual(h.calls.map(call => call.name), ['dragStart', 'dragEnd'], eventName);
+    assert.deepEqual(h.calls.at(-1).payload, { cancelled: true });
+    moved = true;
     orb.dispatch('pointerdown', pointer);
-    orb.dispatch('pointerup', { ...pointer, screenX: 12 });
-    assert.equal(h.calls.some(call => call.name === 'togglePanel'), false, 'a moved release cannot click even without pointermove');
+    orb.dispatch('pointerup', pointer); await flush();
+    assert.equal(h.calls.some(call => call.name === 'togglePanel'), false, 'native moved release cannot click even without browser pointermove');
+    moved = false;
     orb.dispatch('pointerdown', pointer);
-    orb.dispatch('pointerup', pointer);
-    assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 1, 'a subsequent normal click still works');
+    orb.dispatch('pointerup', { ...pointer, screenX: 1200 }); await flush();
+    assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 1, 'a subsequent normal native click still works');
   }
+});
+
+test('failed drag replies never toggle and release the gesture for the next press', async () => {
+  let working = false;
+  const h = harness('orb', fixture(), async name => name === 'dragEnd' ? working ? { ok: true, moved: false } : { ok: false } : { ok: true }); await flush();
+  const orb = h.node('orb'), pointer = { pointerId: 1, button: 0 };
+  orb.dispatch('pointerdown', pointer); orb.dispatch('pointerup', pointer); await flush();
+  assert.equal(h.calls.some(call => call.name === 'togglePanel'), false);
+  working = true;
+  orb.dispatch('pointerdown', pointer); orb.dispatch('pointerup', pointer); await flush();
+  assert.equal(h.calls.filter(call => call.name === 'togglePanel').length, 1);
+});
+
+test('rejected drag start releases capture without opening the panel or freezing later hover', async () => {
+  const h = harness('orb', fixture(), async () => ({ ok: false })); await flush();
+  const orb = h.node('orb'), pointer = { pointerId: 1, button: 0 };
+  orb.dispatch('pointerdown', pointer); await flush();
+  assert.equal(orb.capturedPointer, null);
+  assert.deepEqual(h.calls.map(call => call.name), ['dragStart', 'dragEnd']);
+  assert.deepEqual(h.calls.at(-1).payload, { cancelled: true });
+  orb.dispatch('pointerup', pointer); orb.dispatch('pointerenter'); await flush();
+  assert.deepEqual(h.calls.map(call => call.name), ['dragStart', 'dragEnd', 'orbExpand']);
 });
 
 test('orb keyboard activation expands without repeated keydown toggles', async () => {

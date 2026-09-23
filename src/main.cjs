@@ -54,6 +54,22 @@ function clampPosition(position,width=COMPACT_SIZE,height=COMPACT_SIZE){
   const a=display.workArea;return{x:Math.round(Math.max(a.x,Math.min(position?.x??a.x+a.width-width-24,a.x+a.width-width))),
     y:Math.round(Math.max(a.y,Math.min(position?.y??a.y+a.height/2-height/2,a.y+a.height-height)))};
 }
+function moveOrbDrag(){
+  if(!drag)return false;
+  const cursor=screen.getCursorScreenPoint(),dx=cursor.x-drag.cursor.x,dy=cursor.y-drag.cursor.y;
+  // Threshold and movement use the same trusted DIP coordinate system. Browser
+  // pointer screen coordinates can jump after hover resize or across DPI scales.
+  if(!drag.moved&&Math.hypot(dx,dy)<=4)return false;
+  drag.moved=true;
+  const point=clampPosition({x:drag.bounds.x+dx,y:drag.bounds.y+dy},drag.bounds.width,drag.bounds.height);
+  // A pointer can cross the threshold while the work-area clamp prevents any
+  // window travel, or return to its press position after a real drag. Keep the
+  // last requested DIP position separate from the gesture's moved verdict.
+  drag.position=point;
+  const before=orbWindow.getBounds();
+  if(point.x!==before.x||point.y!==before.y){orbWindow.setPosition(point.x,point.y);anchorPanel();}
+  return true;
+}
 function anchorPanel(){if(!panelWindow||panelWindow.isDestroyed()||!orbWindow)return;
   const b=orbWindow.getBounds(),a=screen.getDisplayMatching(b).workArea,width=Math.min(340,a.width),height=Math.min(panelHeight,a.height);
   let x=b.x-width-10;if(x<a.x)x=b.x+b.width+10;x=Math.max(a.x,Math.min(x,a.x+a.width-width));
@@ -212,11 +228,25 @@ function registerIpc(){
         if(typeof repository!=='string'||!/^[-A-Za-z0-9_]+\/[-A-Za-z0-9_.]+$/.test(repository))return{ok:false,error:'发布仓库尚未配置。'};
         await shell.openExternal('https://github.com/'+repository+'/releases');break;}
       case'setSettings':return applySettings(payload);
-      case'dragStart':if(event.sender!==orbWindow.webContents)return{ok:false};orbController.beginDrag();drag={cursor:screen.getCursorScreenPoint(),bounds:orbWindow.getBounds()};break;
-      case'dragMove':if(event.sender!==orbWindow.webContents||!drag)return{ok:false};{
-        const p=screen.getCursorScreenPoint(),point=clampPosition({x:drag.bounds.x+p.x-drag.cursor.x,y:drag.bounds.y+p.y-drag.cursor.y},drag.bounds.width,drag.bounds.height);
-        orbWindow.setPosition(point.x,point.y);anchorPanel();break;}
-      case'dragEnd':if(event.sender!==orbWindow.webContents)return{ok:false};drag=null;orbController.endDrag();savedPosition=orbController.compactPosition();clearTimeout(saveTimer);saveTimer=setTimeout(saveSettings,250);break;
+      case'dragStart':{
+        if(event.sender!==orbWindow.webContents||drag)return{ok:false};
+        orbController.beginDrag();const bounds=orbWindow.getBounds();
+        drag={cursor:screen.getCursorScreenPoint(),bounds,position:{x:bounds.x,y:bounds.y},moved:false};return{ok:true};}
+      case'dragMove':
+        if(event.sender!==orbWindow.webContents||!drag)return{ok:false};
+        moveOrbDrag();return{ok:true,moved:drag.moved};
+      case'dragEnd':{
+        if(event.sender!==orbWindow.webContents||!drag)return{ok:false};
+        if(payload!==undefined&&(!payload||typeof payload!=='object'||Array.isArray(payload)||
+          Reflect.ownKeys(payload).length!==1||!Object.hasOwn(payload,'cancelled')||typeof payload.cancelled!=='boolean'))return{ok:false};
+        // A release can be the first event after actual cursor travel. Sampling
+        // it here prevents a drag from also toggling the panel; cancellation
+        // never adopts a later cursor position outside this gesture.
+        if(!payload?.cancelled)moveOrbDrag();
+        const moved=drag.moved,positionChanged=moved&&(drag.position.x!==drag.bounds.x||drag.position.y!==drag.bounds.y);
+        drag=null;orbController.endDrag({moved:positionChanged});
+        if(positionChanged){savedPosition=orbController.compactPosition();clearTimeout(saveTimer);saveTimer=setTimeout(saveSettings,250);}
+        return{ok:true,moved};}
       case'quit':app.quit();break;
       default:return{ok:false,error:'未知操作'};
     }return{ok:true};}catch{return{ok:false,error:'操作未完成，请稍后重试。'};}

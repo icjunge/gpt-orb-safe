@@ -223,6 +223,116 @@ test('drag keeps the expanded orb inside a display, then restores pending compac
   assert.equal(orb.shapes.length,shapes+1,'rebuild the native region even if DIP dimensions do not change');
 });
 
+test('stationary press and native DIP jitter never move, save or adopt hover bounds changes',async()=>{
+  const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  const compact={x:orb.bounds.x,y:orb.bounds.y};
+  h.screen.getCursorScreenPoint=()=>({x:500,y:500});
+  for(let cycle=0;cycle<30;cycle++){
+    await h.action('orbExpand',{expanded:true},event);
+    const expanded={x:orb.bounds.x,y:orb.bounds.y};
+    await h.action('dragStart',undefined,event);
+    for(const delta of [{x:0,y:0},{x:3,y:0},{x:2,y:2},{x:0,y:4}]){
+      h.screen.getCursorScreenPoint=()=>({x:500+delta.x,y:500+delta.y});
+      assert.deepEqual(await h.action('dragMove',{screenX:9000,screenY:-9000},event),{ok:true,moved:false});
+      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},expanded);
+    }
+    assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false,'jitter must not schedule a saved position');
+    // Native resize can report its bounds late; no actual cursor drag occurred.
+    orb.bounds.x+=4;orb.bounds.y+=4;
+    await h.action('orbExpand',{expanded:false},event);
+    assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:false});
+    assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},compact);
+    h.screen.getCursorScreenPoint=()=>({x:500,y:500});
+  }
+  assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false);
+});
+
+test('outward drags clamped at every corner never shift or save the compact anchor',async()=>{
+  for(const position of [{x:0,y:0},{x:1872,y:0},{x:0,y:1032},{x:1872,y:1032}]){
+    const h=await launch({preferences:{position}}),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+    let cursor;h.screen.getCursorScreenPoint=()=>cursor;
+    for(let count=0;count<20;count++){
+      await h.action('orbExpand',{expanded:true},event);
+      const press={x:orb.bounds.x,y:orb.bounds.y};
+      cursor={x:press.x+28,y:press.y+28};await h.action('dragStart',undefined,event);
+      cursor={x:cursor.x+(position.x?28:-28),y:cursor.y+(position.y?28:-28)};
+      assert.deepEqual(await h.action('dragMove',undefined,event),{ok:true,moved:true});
+      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},press);
+      assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true},'outward drag must not also click');
+      await h.action('orbExpand',{expanded:false},event);
+      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},position);
+      assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false,'clamped drag must not save a fake position');
+    }
+    assert.deepEqual(h.saved().position,position);
+  }
+});
+
+test('dragging away from a corner and returning to its press position preserves the original unclamped anchor',async()=>{
+  for(const position of [{x:0,y:0},{x:1872,y:0},{x:0,y:1032},{x:1872,y:1032}]){
+    const h=await launch({preferences:{position}}),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+    let cursor;h.screen.getCursorScreenPoint=()=>cursor;
+    for(let count=0;count<20;count++){
+      await h.action('orbExpand',{expanded:true},event);
+      const press={x:orb.bounds.x,y:orb.bounds.y},start={x:press.x+28,y:press.y+28};
+      cursor=start;await h.action('dragStart',undefined,event);
+      const delta={x:position.x?-80:80,y:position.y?-80:80};
+      cursor={x:start.x+delta.x,y:start.y+delta.y};
+      assert.deepEqual(await h.action('dragMove',undefined,event),{ok:true,moved:true});
+      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:press.x+delta.x,y:press.y+delta.y});
+      cursor=start;
+      assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true},'returning drag must not also click');
+      await h.action('orbExpand',{expanded:false},event);
+      assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},position);
+      assert.equal([...h.timers.values()].some(timer=>timer.delay===250),false,'return to start must not save a shifted anchor');
+    }
+    assert.deepEqual(h.saved().position,position);
+  }
+});
+
+test('only native DIP travel beyond the threshold starts a drag, and duplicate starts cannot rebase it',async()=>{
+  const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  let cursor={x:-400,y:-200};h.screen.getCursorScreenPoint=()=>cursor;
+  h.screen.getDisplayNearestPoint=()=>({workArea:{x:-1920,y:-500,width:1920,height:1080}});
+  h.screen.getDisplayMatching=h.screen.getDisplayNearestPoint;
+  orb.bounds.x=-600;orb.bounds.y=-300;h.screen.emit('display-metrics-changed');
+  const initial={x:orb.bounds.x,y:orb.bounds.y};
+  await h.action('dragStart',undefined,event);
+  cursor={x:-397,y:-197};
+  assert.deepEqual(await h.action('dragMove',undefined,event),{ok:true,moved:true});
+  assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:initial.x+3,y:initial.y+3});
+  assert.deepEqual(await h.action('dragStart',undefined,event),{ok:false});
+  cursor={x:-390,y:-185};
+  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:true});
+  assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},{x:initial.x+10,y:initial.y+15});
+  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:false},'one end per gesture');
+});
+
+test('drag gestures reject foreign frames and malformed cancellation without consuming the live gesture',async()=>{
+  const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  const initial={x:orb.bounds.x,y:orb.bounds.y};
+  for(const source of [h.event,{sender:orb.webContents,senderFrame:{url:orb.webContents.mainFrame.url}}]){
+    for(const name of ['dragStart','dragMove','dragEnd'])assert.equal((await h.action(name,undefined,source)).ok,false);
+  }
+  await h.action('dragStart',undefined,event);
+  for(const payload of [null,[],true,{},Object.create({cancelled:false}),{cancelled:0},{cancelled:'false'},{cancelled:false,x:900}]){
+    assert.equal((await h.action('dragEnd',payload,event)).ok,false);
+    assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},initial);
+  }
+  assert.deepEqual(await h.action('dragEnd',{cancelled:false},event),{ok:true,moved:false});
+});
+
+test('release samples missing pointermove but cancellation never follows a later outside cursor',async()=>{
+  for(const cancelled of [false,true]){
+    const h=await launch(),[orb]=h.windows,event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+    h.screen.getCursorScreenPoint=()=>({x:500,y:500});
+    const initial={x:orb.bounds.x,y:orb.bounds.y};
+    await h.action('dragStart',undefined,event);
+    h.screen.getCursorScreenPoint=()=>({x:475,y:460});
+    assert.deepEqual(await h.action('dragEnd',{cancelled},event),{ok:true,moved:!cancelled});
+    assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y},cancelled?initial:{x:initial.x-25,y:initial.y-40});
+  }
+});
+
 test('orb material failure leaves its host transparent without overwriting the working panel',async()=>{
   const h=await launch({orbBackdropFails:true});
   assert.equal(h.state().appearance.nativeBackdrop,true);

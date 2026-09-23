@@ -93,32 +93,36 @@
     settleHover();
   });
   orb.addEventListener('blur', () => { keyboardFocus = false; settleHover(); });
-  function finishDrag(pointerId, cancelled) {
-    if (!dragging || pointerId !== dragging.pointerId) return;
-    const moved = dragging.moved;
-    dragging = null;
+  async function finishDrag(pointerId, cancelled) {
+    const gesture = dragging;
+    if (!gesture || gesture.ending || pointerId !== gesture.pointerId) return;
+    gesture.ending = true;
     try { if (orb.hasPointerCapture(pointerId)) orb.releasePointerCapture(pointerId); } catch {}
-    action('dragEnd');
-    if (!cancelled && !moved) action('togglePanel');
+    // The main process owns both the drag threshold and DIP cursor coordinates.
+    // Keep the gesture locked until its reply so a late end cannot click or
+    // resize a newer gesture. Releasing capture can synchronously fire lostcapture.
+    const result = await action('dragEnd', { cancelled });
+    if (dragging !== gesture) return;
+    dragging = null;
+    if (!cancelled && result?.ok === true && result.moved === false) action('togglePanel');
     settleHover();
   }
   orb.addEventListener('pointerdown', event => {
     if (event.button !== 0 || dragging) return;
     clearCollapse();
-    dragging = { pointerId: event.pointerId, x: event.screenX, y: event.screenY, moved: false };
+    const gesture = dragging = { pointerId: event.pointerId, ending: false };
     try { orb.setPointerCapture(event.pointerId); } catch { dragging = null; settleHover(); return; }
-    action('dragStart');
+    action('dragStart').then(result => {
+      if (dragging === gesture && !gesture.ending && result?.ok !== true) finishDrag(event.pointerId, true);
+    });
   });
   orb.addEventListener('pointermove', event => {
-    if (!dragging || event.pointerId !== dragging.pointerId) return;
-    if (Math.hypot(event.screenX - dragging.x, event.screenY - dragging.y) > 4) dragging.moved = true;
-    if (dragging.moved) action('dragMove');
+    if (!dragging || dragging.ending || event.pointerId !== dragging.pointerId) return;
+    // Browser screenX/screenY may change during native resize or DPI changes;
+    // they must never decide whether a stationary press becomes a real drag.
+    action('dragMove');
   });
-  orb.addEventListener('pointerup', event => {
-    if (!dragging || event.pointerId !== dragging.pointerId) return;
-    if (Math.hypot(event.screenX - dragging.x, event.screenY - dragging.y) > 4) dragging.moved = true;
-    finishDrag(event.pointerId, false);
-  });
+  orb.addEventListener('pointerup', event => finishDrag(event.pointerId, false));
   orb.addEventListener('pointercancel', event => finishDrag(event.pointerId, true));
   orb.addEventListener('lostpointercapture', event => finishDrag(event.pointerId, true));
   orb.addEventListener('keydown', event => {
