@@ -24,7 +24,9 @@
           <div class="empty-orbit" aria-hidden="true"><svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="17"/><path d="m19 18-6 6 6 6M29 18l6 6-6 6"/></svg></div>
           <h1 id="empty-title">连接 Codex</h1>
           <p id="empty-description">登录一次，用量自动更新。</p>
-          <button id="configure-button" class="primary-button">连接设置</button>
+          <div id="empty-setup-progress" class="setup-progress hidden"><progress id="empty-component-progress" max="100" aria-label="组件准备进度"></progress><span id="empty-component-progress-value"></span></div>
+          <div class="onboarding-actions"><button id="configure-button" class="primary-button">连接 Codex</button><button id="empty-cancel-connect-button" class="text-button hidden">取消</button></div>
+          <p id="empty-privacy" class="onboarding-privacy hidden">将准备官方组件并打开官方登录页。<br>登录状态保存在本机，仅查询用量。</p>
         </div>
         <section id="data-content" class="hidden">
           <div id="freshness-note" class="freshness-note hidden" role="status"></div>
@@ -50,18 +52,27 @@
         <section id="codex-controls" class="codex-card" aria-labelledby="codex-heading">
           <div class="section-header"><h2 id="codex-heading">读取与刷新</h2><span id="codex-state-label">尚未开启</span></div>
           <p id="codex-status" class="group-description" role="status">登录官方 Codex 后开启。</p>
+          <div id="codex-managed-controls" class="hidden">
+            <div id="codex-setup-progress" class="setup-progress hidden"><progress id="component-progress" max="100" aria-label="组件准备进度"></progress><span id="component-progress-value"></span></div>
+            <div class="onboarding-actions"><button id="connect-codex-button" class="primary-button">连接 Codex</button><button id="cancel-connect-button" class="text-button hidden">取消</button></div>
+            <p id="codex-managed-privacy" class="group-description">将准备官方组件并打开官方登录页。登录状态保存在本机，仅查询用量。</p>
+          </div>
           <form id="codex-refresh-form" class="codex-refresh-form">
             <label for="refresh-minutes">每隔 <input id="refresh-minutes" type="number" min="1" max="1440" step="1" value="5" required inputmode="numeric"> 分钟刷新</label>
             <button id="save-refresh-button" type="submit" class="secondary-button">保存</button>
           </form>
           <p id="codex-schedule" class="codex-schedule"></p>
-          <div class="codex-actions"><button id="enable-codex-button" class="primary-button">开启读取</button><button id="refresh-codex-button" class="secondary-button" disabled>立即刷新</button><button id="disable-codex-button" class="text-button" disabled>暂停</button></div>
-          <div id="codex-setup" class="codex-setup">
-            <p>首次使用：在 PowerShell 安装并登录同一个 ChatGPT 账号。</p>
-            <pre class="setup-commands"><code>npm.cmd install -g @openai/codex
+          <div class="codex-actions"><button id="enable-codex-button" class="primary-button">开启读取</button><button id="refresh-codex-button" class="secondary-button" disabled>立即刷新</button><button id="disable-codex-button" class="text-button" disabled>暂停</button><button id="logout-codex-button" class="text-button hidden">退出此账号</button></div>
+          <details id="codex-advanced" class="privacy-disclosure"><summary>已有 Codex / 手动设置</summary>
+            <div class="source-picker connection-picker"><label for="codex-connection">连接方式</label><select id="codex-connection"><option value="managed">自动配置（推荐）</option><option value="existing">使用本机已安装的 Codex</option></select></div>
+            <p id="connection-mode-note" class="group-description">自动配置使用独立的登录状态，不影响已有 Codex。</p>
+            <div id="codex-setup" class="codex-setup">
+              <p>使用已有 Codex 时，可在 PowerShell 安装并登录同一个 ChatGPT 账号。</p>
+              <pre class="setup-commands"><code>npm.cmd install -g @openai/codex
 if ($LASTEXITCODE -eq 0) { codex.cmd login }</code></pre>
-            <div class="codex-help-actions"><button id="copy-codex-setup-button" class="secondary-button">复制安装命令</button><button id="codex-help-button" class="text-button">安装说明 ↗</button></div>
-          </div>
+              <div class="codex-help-actions"><button id="copy-codex-setup-button" class="secondary-button">复制安装命令</button><button id="codex-help-button" class="text-button">安装说明 ↗</button></div>
+            </div>
+          </details>
           <details class="privacy-disclosure"><summary>本机读取与隐私</summary><p class="group-description codex-privacy">登录由官方 Codex 管理。本工具不复制凭据，仅查询用量。自动刷新需保持工具运行。</p></details>
         </section>
         <section id="setup-card" class="setup-card">

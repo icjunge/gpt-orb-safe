@@ -91,6 +91,130 @@ function harness(page, initial, actionImpl = async (name, payload) => name === '
 }
 async function flush() { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); }
 
+function managedFixture(overrides = {}) {
+  return fixture({ snapshot: null, settings: { usageSource: 'codex-cli', codexConnection: 'managed', refreshMinutes: 5 },
+    codex: { enabled: false, state: 'disabled' }, codexSetup: { status: 'idle', mode: 'managed', progress: null, message: '' }, ...overrides });
+}
+
+test('managed first use connects only after a click and keeps manual commands out of the main flow', async () => {
+  const h = harness('panel', managedFixture()); await flush();
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.node('configure-button').textContent, '连接 Codex');
+  assert.equal(h.node('codex-setup').classList.contains('hidden'), true);
+  assert.equal(h.node('codex-advanced').open, false);
+  assert.equal(h.node('empty-privacy').classList.contains('hidden'), false);
+  assert.equal(h.node('codex-refresh-form').classList.contains('hidden'), true);
+  h.node('configure-button').dispatch('click'); await flush();
+  assert.deepEqual(h.calls.map(call => call.name), ['connectCodex']);
+  assert.equal(h.node('settings-view').classList.contains('hidden'), true);
+  assert.equal(h.node('enable-codex-button').classList.contains('hidden'), true);
+});
+
+test('pending managed connection blocks duplicate connects and setting mutations while cancellation remains available', async () => {
+  let completeConnect;
+  const h = harness('panel', managedFixture(), async name => name === 'connectCodex' ? new Promise(resolve => { completeConnect = resolve; }) : { ok: true }); await flush();
+  h.node('configure-button').dispatch('click');
+  h.node('configure-button').dispatch('click');
+  h.node('connect-codex-button').dispatch('click');
+  assert.deepEqual(h.calls.map(call => call.name), ['connectCodex']);
+  assert.equal(h.node('usage-source').disabled, true);
+  assert.equal(h.node('codex-connection').disabled, true);
+  assert.equal(h.node('refresh-minutes').disabled, true);
+  assert.equal(h.node('empty-cancel-connect-button').disabled, false);
+  h.node('usage-source').dispatch('change', { target: { value: 'browser' } });
+  h.node('codex-connection').dispatch('change', { target: { value: 'existing' } });
+  h.node('enable-codex-button').dispatch('click');
+  h.node('codex-refresh-form').dispatch('submit');
+  assert.equal(h.calls.length, 1);
+  h.node('empty-cancel-connect-button').dispatch('click');
+  h.node('cancel-connect-button').dispatch('click'); await flush();
+  assert.deepEqual(h.calls.map(call => call.name), ['connectCodex', 'cancelCodexConnect']);
+  completeConnect({ ok: true }); await flush();
+  h.change(managedFixture());
+  assert.equal(h.node('configure-button').disabled, false);
+  assert.equal(h.node('usage-source').disabled, false);
+  assert.equal(h.node('empty-cancel-connect-button').classList.contains('hidden'), true);
+});
+
+test('managed progress, browser login, error retry, and logout use literal safe status text', async () => {
+  const start = managedFixture(); const h = harness('panel', start); await flush();
+  h.change({ ...start, codexSetup: { status: 'preparing', mode: 'managed', progress: 47.8, message: '正在下载组件' } });
+  assert.equal(h.node('empty-component-progress').value, 47.8);
+  assert.equal(h.node('component-progress-value').textContent, '48%');
+  assert.equal(h.node('empty-setup-progress').classList.contains('hidden'), false);
+  assert.equal(h.node('configure-button').disabled, true);
+  assert.equal(h.node('sync-status').textContent, '准备组件…');
+  h.change({ ...start, codexSetup: { status: 'preparing', mode: 'managed', progress: null } });
+  assert.equal(Object.hasOwn(h.node('empty-component-progress'), 'value'), false);
+  h.change({ ...start, codexSetup: { status: 'waiting-login', mode: 'managed' } });
+  assert.equal(h.node('empty-setup-progress').classList.contains('hidden'), true);
+  assert.equal(h.node('configure-button').textContent, '请在浏览器完成登录');
+  assert.equal(h.node('sync-status').textContent, '等待登录');
+  const hostile = '<img src=x onerror=alert(1)> 连接未完成';
+  h.change({ ...start, codexSetup: { status: 'error', mode: 'managed', message: hostile } });
+  assert.equal(h.node('empty-description').textContent, hostile);
+  assert.equal(h.node('codex-status').textContent, hostile);
+  assert.equal(h.node('configure-button').textContent, '重新连接');
+  assert.equal(h.node('configure-button').disabled, false);
+  h.node('configure-button').dispatch('click'); await flush();
+  assert.equal(h.calls.at(-1).name, 'connectCodex');
+  const ready = fixture({ settings: start.settings, codexSetup: { status: 'connected', mode: 'managed' } });
+  h.change(ready);
+  assert.equal(h.node('empty-state').classList.contains('hidden'), true);
+  assert.equal(h.node('connect-codex-button').classList.contains('hidden'), true);
+  assert.equal(h.node('logout-codex-button').classList.contains('hidden'), false);
+  assert.equal(h.node('refresh-codex-button').disabled, false);
+  h.node('logout-codex-button').dispatch('click'); await flush();
+  assert.equal(h.calls.at(-1).name, 'logoutCodex');
+});
+
+test('managed paused login resumes reading, expired login reconnects, and existing account never gets logout', async () => {
+  const start = managedFixture({ codexSetup: { status: 'connected', mode: 'managed' } });
+  const h = harness('panel', start); await flush();
+  assert.equal(h.node('enable-codex-button').classList.contains('hidden'), false);
+  assert.equal(h.node('connect-codex-button').classList.contains('hidden'), true);
+  h.node('enable-codex-button').dispatch('click'); await flush();
+  assert.deepEqual(h.calls.map(call => call.name), ['setSettings', 'enableCodex']);
+  h.change({ ...start, codex: { enabled: true, state: 'needs-login' } });
+  assert.equal(h.node('configure-button').textContent, '重新连接');
+  assert.equal(h.node('enable-codex-button').classList.contains('hidden'), true);
+  h.node('configure-button').dispatch('click'); await flush();
+  assert.equal(h.calls.at(-1).name, 'connectCodex');
+  h.change({ ...start, settings: { ...start.settings, codexConnection: 'existing' }, codexSetup: { status: 'idle', mode: 'existing' } });
+  assert.equal(h.node('codex-managed-controls').classList.contains('hidden'), true);
+  assert.equal(h.node('codex-setup').classList.contains('hidden'), false);
+  const count = h.calls.length;
+  h.node('logout-codex-button').dispatch('click'); await flush();
+  assert.equal(h.calls.length, count);
+  h.node('codex-connection').dispatch('change', { target: { value: 'managed' } }); await flush();
+  assert.deepEqual(h.calls.at(-1), { name: 'setSettings', payload: { codexConnection: 'managed' } });
+  assert.equal(h.node('configure-button').textContent, '连接 Codex');
+});
+
+test('previous managed login stays removable after restart, expiry, or a failed logout', async () => {
+  const start = managedFixture({ codexSetup: { status: 'idle', mode: 'managed', hasLogin: true } });
+  const h = harness('panel', start, async name => name === 'logoutCodex' ? { ok: false } : { ok: true }); await flush();
+  for (const status of ['idle', 'connected', 'error']) {
+    h.change({ ...start, codex: { enabled: false, state: 'needs-login' }, codexSetup: { status, mode: 'managed', hasLogin: true } });
+    assert.equal(h.node('logout-codex-button').classList.contains('hidden'), false);
+    assert.equal(h.node('logout-codex-button').disabled, false);
+    const calls = h.calls.length;
+    h.node('logout-codex-button').dispatch('click'); await flush();
+    assert.equal(h.calls.length, calls + 1);
+    assert.equal(h.calls.at(-1).name, 'logoutCodex');
+    assert.equal(h.node('logout-codex-button').classList.contains('hidden'), false, 'a failed logout does not pretend to remove login');
+    assert.equal(h.node('logout-codex-button').disabled, false);
+  }
+  h.change({ ...start, codexSetup: { status: 'waiting-login', mode: 'managed', hasLogin: true } });
+  assert.equal(h.node('logout-codex-button').classList.contains('hidden'), false);
+  assert.equal(h.node('logout-codex-button').disabled, true);
+  const calls = h.calls.length;
+  h.node('logout-codex-button').dispatch('click'); await flush();
+  assert.equal(h.calls.length, calls);
+  h.change({ ...start, codexSetup: { status: 'idle', mode: 'managed', hasLogin: false } });
+  assert.equal(h.node('logout-codex-button').classList.contains('hidden'), true);
+});
+
 test('native mode requires explicit enable and shows installation without browser pairing', async () => {
   const h = harness('panel', fixture({ snapshot: null, codex: { enabled: false, state: 'disabled' } })); await flush();
   assert.equal(h.node('empty-state').classList.contains('hidden'), false);

@@ -26,6 +26,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: call scripts\Install-Tools.cmd --check
+      - name: Verify pinned Codex component and isolated official account protocol
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        run: node test/windows-codex-managed-smoke.cjs
       - name: Verify Windows installer build
         if: runner.os == 'Windows'
         run: npm run build:win

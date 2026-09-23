@@ -46,6 +46,80 @@ function fixture(handler = () => undefined) {
   return {calls, spawnImpl, get child() { return child; }, get spawned() { return spawned; }};
 }
 function readWith(f, options = {}) { return readCodexUsage({executable:EXE, cwd:CWD, spawnImpl:f.spawnImpl, ...options}); }
+const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('managed successful read waits for actual child exit before returning', async () => {
+  const codexHome=require('node:path').resolve('fixture-managed-delayed-success');
+  const f=fixture((_message,{child})=>{child.kill=signal=>{child.kills.push(signal);return true;};});
+  let settled=false;
+  const pending=readWith(f,{codexHome}).then(value=>{settled=true;return value;});
+  await tick();
+  assert.equal(settled,false);
+  assert.equal(f.child.kills[0],'SIGTERM');
+  f.child.emit('exit',0);
+  assert.equal((await pending).snapshot.source,'codex-cli');
+});
+
+test('stopAndWait drains a managed read already cleared by synchronous stop before allowing auth work', async () => {
+  const codexHome=require('node:path').resolve('fixture-managed-delayed-stop');
+  const order=[];
+  const f=fixture((message,{child})=>{
+    child.kill=signal=>{child.kills.push(signal);return true;};
+    if(message.method==='account/rateLimits/read')return null;
+  });
+  const provider=new CodexProvider({discover:async()=>({path:EXE,codexHome}),cwd:CWD,read:options=>readWith(f,options)});
+  const running=provider.start();
+  await tick();
+  provider.stop();
+  let drained=false;
+  const drain=provider.stopAndWait().then(()=>{drained=true;order.push('new-auth');});
+  await tick();
+  assert.equal(drained,false);
+  // An in-flight refresh may persist until the old process is actually gone.
+  order.push('old-refresh-write');
+  f.child.emit('exit',0);
+  await drain;await running;
+  assert.deepEqual(order,['old-refresh-write','new-auth']);
+  assert.equal(provider.getStatus().enabled,false);
+});
+
+test('failed managed termination blocks auth handoff and another read until actual late exit', async () => {
+  const codexHome=require('node:path').resolve('fixture-managed-failed-stop');
+  const f=fixture((message,{child})=>{
+    child.kill=signal=>{child.kills.push(signal);return false;};
+    if(message.method==='account/rateLimits/read')return null;
+  });
+  const provider=new CodexProvider({discover:async()=>({path:EXE,codexHome}),cwd:CWD,read:options=>readWith(f,options)});
+  const running=provider.start();
+  await tick();
+  try {
+    await assert.rejects(provider.stopAndWait(),error=>error.code==='busy'&&!/fixture|private|token/.test(error.message));
+    const other=fixture();
+    await assert.rejects(readWith(other,{codexHome}),error=>error.code==='busy');
+    assert.equal(other.spawned,undefined);
+    assert.deepEqual(f.child.kills,['SIGTERM','SIGKILL']);
+  } finally { f.child.emit('exit',0); }
+  await running;
+  await provider.stopAndWait();
+  assert.equal((await readWith(fixture(),{codexHome})).snapshot.source,'codex-cli');
+});
+
+test('existing CLI queries retain their original synchronous termination behavior', async () => {
+  const f=fixture((_message,{child})=>{child.kill=signal=>{child.kills.push(signal);return true;};});
+  const response=await readWith(f);
+  assert.equal(response.snapshot.source,'codex-cli');
+  f.child.emit('exit',0);
+});
+
+test('managed reads use isolated keyring configuration with the same fixed read-only methods', async () => {
+  const f=fixture(), codexHome=require('node:path').resolve('fixture-managed-home');
+  await readWith(f,{codexHome});
+  assert.equal(f.spawned.options.env.CODEX_HOME,codexHome);
+  assert.ok(f.spawned.args.includes('cli_auth_credentials_store="keyring"'));
+  for(const key of Object.keys(f.spawned.options.env))assert.ok(!/^OPENAI_|^OTEL_|^CODEX_API_KEY$/.test(key));
+  assert.deepEqual(f.calls.map(call=>call.method),['initialize','initialized','account/read','account/rateLimits/read','account/read','account/usage/read','account/read']);
+  await assert.rejects(readWith(f,{codexHome:'relative-home'}),error=>error.code==='not-found');
+});
 
 test('only the fixed read RPCs run, with native executable, no shell, and per-process feature restrictions', async () => {
   const f = fixture();

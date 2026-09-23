@@ -1,6 +1,6 @@
 'use strict';
 const {app,BrowserWindow,ipcMain,screen,Tray,Menu,nativeImage,shell,Notification,
-  globalShortcut,dialog,clipboard,nativeTheme} = require('electron');
+  globalShortcut,dialog,clipboard,nativeTheme,net,session} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -11,6 +11,10 @@ const {UpdateManager} = require('./updater.cjs');
 const {validSettings,allowedSender} = require('./security.cjs');
 const {CodexProvider} = require('./codex-provider.cjs');
 const {discoverCodex} = require('./codex-discovery.cjs');
+const {createCodexRuntime} = require('./codex-runtime.cjs');
+const {loginManagedCodex,logoutManagedCodex} = require('./codex-auth.cjs');
+const {CodexSetup} = require('./codex-setup.cjs');
+const {prepareManagedDirectories} = require('./codex-directories.cjs');
 const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial} = require('./window-material.cjs');
 const {COMPACT_SIZE,HOST_SIZE,HOST_INSET,createOrbController} = require('./orb-window.cjs');
 app.setName('GPT Usage Orb Safe');
@@ -19,7 +23,7 @@ app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 nativeTheme.themeSource='dark';
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
-let codexProvider=null;
+let codexProvider=null,codexRuntime=null,codexSetup=null;
 let orbController=null;
 let panelHeight=240;
 let appearance=systemAppearance(nativeTheme);
@@ -30,6 +34,11 @@ const trustedWindows=new Map();
 const settingsPath=()=>path.join(app.getPath('userData'),'preferences.json');
 function loadSettings(){
   try{const data=JSON.parse(fs.readFileSync(settingsPath(),'utf8'));settings=validSettings(data.settings);
+    // Existing and paused local-CLI users keep their normal Codex home/account.
+    // A fresh install uses the app's isolated, explicit-click connection flow.
+    if(!Object.hasOwn(data.settings||{},'codexConnection')&&
+      (data.settings?.usageSource==='codex-cli'||data.settings?.codexEnabled===true))settings.codexConnection='existing';
+    settings.codexManagedConnected=data.settings?.codexManagedConnected===true;
     if(Number.isFinite(data.position?.x)&&Number.isFinite(data.position?.y))savedPosition=data.position;
   }catch{}
 }
@@ -38,8 +47,18 @@ function saveSettings(){
     fs.writeFileSync(temporary,JSON.stringify({settings,position:savedPosition},null,2));fs.renameSync(temporary,settingsPath());
   }catch{}
 }
-function nativeStatus(){return codexProvider?.getStatus()||{enabled:false,running:false,state:'disabled',message:'点击开启本机读取。',
-  lastSuccessAt:null,nextRunAt:null,intervalMinutes:settings.refreshMinutes};}
+function nativeStatus(){const value=codexProvider?.getStatus()||{enabled:false,running:false,state:'disabled',message:'点击开启本机读取。',
+  lastSuccessAt:null,nextRunAt:null,intervalMinutes:settings.refreshMinutes};
+  if(settings.codexConnection==='managed'){
+    const messages={'not-found':'连接组件暂不可用，请点击重新连接。','needs-login':'登录已失效，请重新连接。',
+      unsupported:'连接组件不支持当前查询，请检查程序更新后重新连接。'};
+    if(messages[value.state])return{...value,message:messages[value.state]};
+  }return value;}
+function setupStatus(){const value=codexSetup?.getStatus()||{status:'idle',progress:null,message:''};
+  const native=nativeStatus();
+  if(settings.codexConnection==='managed'&&!codexSetup?.busy&&['not-found','needs-login','unsupported'].includes(native.state))
+    return{...value,status:'error',message:native.message};
+  return value;}
 function staleAfterMs(){return settings.usageSource==='codex-cli'?settings.refreshMinutes*60000+90000:180000;}
 function currentError(){const status=nativeStatus();return settings.usageSource==='codex-cli'
   ?(['not-found','needs-login','unsupported','error'].includes(status.state)?status.message:null):error;}
@@ -47,6 +66,8 @@ function state(){const status=bridge?.getStatus()||{listening:false,connected:fa
   const activeError=currentError();
   return {status:activeError?'error':snapshot?'ready':settings.usageSource==='codex-cli'||status.listening?'waiting':'starting',
     bridge:status,snapshot,settings,appearance,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
+    codexSetup:{...setupStatus(),
+      mode:settings.codexConnection,hasLogin:settings.codexManagedConnected},
     updates:updateManager?.snapshot()||unavailableUpdates(),
     extension:extensionInfo?{version:extensionInfo.version,changed:extensionInfo.changed,needsReload:extensionInfo.changed,error:extensionInfo.error||null}:null};}
 function clampPosition(position,width=COMPACT_SIZE,height=COMPACT_SIZE){
@@ -162,15 +183,18 @@ function createTray(){tray=new Tray(nativeImage.createFromPath(path.join(__dirna
 function applySettings(input){
   const next=validSettings(input,settings);
   const sourceChanged=next.usageSource!==settings.usageSource;
-  if(sourceChanged||next.usageSource!=='codex-cli')next.codexEnabled=false;
-  const nativeChanged=sourceChanged||next.codexEnabled!==settings.codexEnabled||next.refreshMinutes!==settings.refreshMinutes;
+  const modeChanged=next.codexConnection!==settings.codexConnection;
+  if(codexSetup?.busy&&(sourceChanged||modeChanged||next.codexEnabled!==settings.codexEnabled||next.refreshMinutes!==settings.refreshMinutes))
+    return{ok:false,error:'请先完成或取消当前连接。'};
+  if(sourceChanged||modeChanged||next.usageSource!=='codex-cli')next.codexEnabled=false;
+  const nativeChanged=sourceChanged||modeChanged||next.codexEnabled!==settings.codexEnabled||next.refreshMinutes!==settings.refreshMinutes;
   if(next.autoStart!==settings.autoStart&&process.platform==='win32'){
     app.setLoginItemSettings({openAtLogin:next.autoStart,path:process.execPath,args:['--startup']});
     next.autoStart=app.getLoginItemSettings({path:process.execPath,args:['--startup']}).openAtLogin;
   }
   const newlyEnabled=next.autoCheckUpdates&&!settings.autoCheckUpdates;
   settings=next;if(newlyEnabled)void updateManager?.check({download:true});
-  if(sourceChanged){snapshot=null;notified.clear();bridge?.rotateKey();}
+  if(sourceChanged||modeChanged){snapshot=null;notified.clear();bridge?.rotateKey();}
   if(nativeChanged&&codexProvider){
     if(settings.usageSource==='codex-cli'&&settings.codexEnabled)void codexProvider.start(settings.refreshMinutes);
     else codexProvider.stop();
@@ -179,7 +203,7 @@ function applySettings(input){
   applyOrbOpacity();
   saveSettings();tray?.setContextMenu(trayMenu());publish();return{ok:true};
 }
-function disconnect(){codexProvider?.stop();settings.codexEnabled=false;saveSettings();snapshot=null;notified.clear();bridge?.rotateKey();tray?.setContextMenu(trayMenu());publish();}
+function disconnect(){void codexSetup?.cancel();codexProvider?.stop();settings.codexEnabled=false;saveSettings();snapshot=null;notified.clear();bridge?.rotateKey();tray?.setContextMenu(trayMenu());publish();}
 function notifyLow(){
   if(!settings.notifications||!['official-page','codex-cli'].includes(snapshot?.source)||Date.now()-snapshot.capturedAt>staleAfterMs())return;
   if(snapshot.source==='codex-cli'&&!nativeStatus().enabled)return;
@@ -209,12 +233,23 @@ function registerIpc(){
       case'orbExpand':if(event.sender!==orbWindow?.webContents)return{ok:false};return orbController.request(payload);
       case'copyPairingCode':if(!bridge?.getStatus().listening)return{ok:false,error:'本机同步尚未启动'};clipboard.writeText(bridge.getPairingCode());break;
       case'disconnect':disconnect();break;
+      case'connectCodex':
+      case'cancelCodexConnect':
+      case'logoutCodex':{
+        if(event.sender!==panelWindow?.webContents||payload!==undefined)return{ok:false,error:'来源无效'};
+        if(settings.usageSource!=='codex-cli'||settings.codexConnection!=='managed'||!codexSetup)return{ok:false,error:'请先选择自动连接。'};
+        const result=await (name==='connectCodex'?codexSetup.connect():name==='cancelCodexConnect'?codexSetup.cancel():codexSetup.logout());
+        if(name==='logoutCodex'&&result.ok)settings.codexManagedConnected=false;
+        if(result.code==='logout-failed')settings.codexManagedConnected=true;
+        saveSettings();publish();
+        return result;}
       case'enableCodex':
         if(settings.usageSource!=='codex-cli')return{ok:false,error:'请先选择本机 Codex 数据来源。'};
         if(!codexProvider)return{ok:false,error:'本机读取尚未准备好，请稍后重试。'};
         return applySettings({codexEnabled:true});
       case'disableCodex':return applySettings({codexEnabled:false});
       case'refreshCodex':
+        if(codexSetup?.busy)return{ok:false,error:'请先完成或取消当前连接。'};
         if(settings.usageSource!=='codex-cli'||!settings.codexEnabled||!codexProvider)return{ok:false,error:'请先开启本机 Codex 读取。'};
         void codexProvider.refresh();break;
       case'copyCodexSetup':clipboard.writeText('npm.cmd install -g @openai/codex\r\nif ($LASTEXITCODE -eq 0) { codex.cmd login }');break;
@@ -270,9 +305,33 @@ else{
     registerIpc();createWindows();createTray();
     const codexWorkingDirectory=path.join(app.getPath('userData'),'codex-query');
     fs.mkdirSync(codexWorkingDirectory,{recursive:true});
-    codexProvider=new CodexProvider({discover:()=>discoverCodex(),cwd:codexWorkingDirectory,
+    const codexHome=path.join(app.getPath('userData'),'codex-managed-home');
+    // A non-persistent, cookie-free session is used only on explicit Connect.
+    const componentSession=session.fromPartition('codex-component-download',{cache:false});
+    const runtime=createCodexRuntime({userDataDir:app.getPath('userData'),platform:process.platform,arch:process.arch,
+      request:options=>net.request({...options,session:componentSession,credentials:'omit',useSessionCookies:false,redirect:'manual'})});
+    codexRuntime={
+      async ensureReady(options){await prepareManagedDirectories(app.getPath('userData'),{create:true});
+        const executable=await runtime.ensureReady(options);
+        if(!await prepareManagedDirectories(app.getPath('userData'),{create:false}))throw Object.assign(new Error('连接目录不可用。'),{code:'storage'});
+        return executable;},
+      async getVerifiedExecutable(options){const directories=await prepareManagedDirectories(app.getPath('userData'),{create:false});
+        return directories?runtime.getVerifiedExecutable(options):null;}};
+    codexSetup=new CodexSetup({runtime:codexRuntime,login:loginManagedCodex,logout:logoutManagedCodex,codexHome,cwd:codexWorkingDirectory,
+      openExternal:url=>shell.openExternal(url),onState:publish,
+      onDisconnect:async()=>{const stopped=codexProvider?.stopAndWait();settings.codexEnabled=false;snapshot=null;notified.clear();saveSettings();tray?.setContextMenu(trayMenu());publish();await stopped;},
+      onConnected:()=>{if(quitting||settings.usageSource!=='codex-cli'||settings.codexConnection!=='managed')return;
+        settings.codexManagedConnected=true;settings.codexEnabled=true;saveSettings();
+        void codexProvider?.start(settings.refreshMinutes);tray?.setContextMenu(trayMenu());publish();}});
+    if(settings.codexManagedConnected)codexSetup.markConnected();
+    codexProvider=new CodexProvider({discover:async({signal}={})=>{
+      if(settings.codexConnection==='existing')return discoverCodex();
+      const executable=await codexRuntime.getVerifiedExecutable({signal});
+      return executable?{path:executable,codexHome}:null;},cwd:codexWorkingDirectory,
       intervalMinutes:settings.refreshMinutes,onState:publish,
-      onSnapshot:value=>{if(!quitting&&settings.usageSource==='codex-cli'&&settings.codexEnabled){snapshot=value;publish();notifyLow();}},
+      onSnapshot:value=>{if(!quitting&&settings.usageSource==='codex-cli'&&settings.codexEnabled){
+        if(settings.codexConnection==='managed'){settings.codexManagedConnected=true;codexSetup.markConnected();saveSettings();}
+        snapshot=value;publish();notifyLow();}},
       onClear:()=>{if(settings.usageSource==='codex-cli'){snapshot=null;notified.clear();publish();}}});
     // NSIS installs supply app-update.yml. Legacy portable packages cannot safely
     // use this updater and never fall back to an unsigned download-and-run path.
@@ -292,10 +351,10 @@ else{
     globalShortcut.register('CommandOrControl+Alt+G',togglePanel);
     for(const event of['display-metrics-changed','display-removed'])screen.on(event,()=>{orbController.syncDisplay();anchorPanel();});
     tick=setInterval(publish,30000);
-  }).catch(()=>{dialog.showErrorBox('GPT 悬浮球启动失败','请重新打开程序；若仍无法启动，请使用完整安装包修复。官方账号凭据不由悬浮球保存。');app.quit();});
+  }).catch(()=>{dialog.showErrorBox('GPT 悬浮球启动失败','请重新打开程序；若仍无法启动，请使用完整安装包修复。');app.quit();});
   app.on('window-all-closed',()=>{});
   app.on('before-quit',event=>{if(quitting)return;event.preventDefault();quitting=true;
-    clearInterval(tick);clearInterval(updateTimer);clearTimeout(firstUpdateTimer);clearTimeout(saveTimer);updateManager?.stop();codexProvider?.stop();saveSettings();snapshot=null;globalShortcut.unregisterAll();tray?.destroy();
-    Promise.resolve(bridge?.close()).finally(()=>app.quit());
+    clearInterval(tick);clearInterval(updateTimer);clearTimeout(firstUpdateTimer);clearTimeout(saveTimer);updateManager?.stop();saveSettings();snapshot=null;globalShortcut.unregisterAll();tray?.destroy();
+    Promise.allSettled([codexSetup?.stop(),codexProvider?.stopAndWait(),bridge?.close()]).finally(()=>app.quit());
   });
 }

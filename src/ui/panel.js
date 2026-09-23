@@ -5,6 +5,8 @@
   let toastTimer = null;
   let settingsVisible = false;
   let codexBusy = false;
+  let connectBusy = false;
+  let cancelBusy = false;
   let intervalDirty = false;
   let glassTintDirty = false;
   let glassTintRevision = 0;
@@ -19,6 +21,13 @@
   const setText = (id, value) => { $(id).textContent = value; };
   const selectedSource = () => state.usageSource || state.settings?.usageSource || (state.codex || state.snapshot?.source === 'codex-cli' ? 'codex-cli' : 'browser');
   const nativeMode = () => selectedSource() === 'codex-cli';
+  // Older state snapshots keep their existing connection until main migrates them.
+  const managedMode = () => (state.settings?.codexConnection || state.codexSetup?.mode) === 'managed';
+  const setupStatus = () => state.codexSetup?.status || 'idle';
+  const setupInProgress = () => managedMode() && (connectBusy || ['preparing', 'waiting-login'].includes(setupStatus()));
+  const managedConnected = () => managedMode() && setupStatus() === 'connected';
+  const hasManagedLogin = () => managedMode() && (managedConnected() || state.codexSetup?.hasLogin === true);
+  const needsManagedLogin = () => managedMode() && (!managedConnected() || state.codex?.state === 'needs-login');
   const snapshot = () => state.snapshot && ((state.snapshot.source === 'codex-cli') === nativeMode()) ? state.snapshot : null;
   const stale = () => !!snapshot() && Date.now() - snapshot().capturedAt > (finite(state.staleAfterMs) && state.staleAfterMs > 0 ? state.staleAfterMs : 180000);
   const manual = () => snapshot()?.source === 'manual-page';
@@ -116,6 +125,9 @@
   }
   function renderCodexControls() {
     const native = nativeMode();
+    const managed = managedMode();
+    const connecting = setupInProgress();
+    const locked = codexBusy || connecting;
     const codex = state.codex || {};
     const enabled = !!codex.enabled;
     const current = codex.state || 'disabled';
@@ -131,22 +143,29 @@
     };
     hidden('codex-controls', !native);
     hidden('browser-settings', native);
-    if (!codexBusy) $('usage-source').value = selectedSource();
-    $('usage-source').disabled = codexBusy;
+    if (!codexBusy) {
+      $('usage-source').value = selectedSource();
+      $('codex-connection').value = managed ? 'managed' : 'existing';
+    }
+    $('usage-source').disabled = locked;
+    $('codex-connection').disabled = locked;
     if (!intervalDirty && document.activeElement !== $('refresh-minutes')) {
       const interval = state.settings?.refreshMinutes ?? codex.intervalMinutes;
       $('refresh-minutes').value = String(Number.isInteger(interval) && interval >= 1 && interval <= 1440 ? interval : 5);
     }
-    for (const id of ['refresh-minutes', 'save-refresh-button', 'enable-codex-button']) $(id).disabled = codexBusy;
-    hidden('enable-codex-button', enabled);
-    $('disable-codex-button').disabled = codexBusy || !enabled;
-    $('refresh-codex-button').disabled = codexBusy || !enabled || !!codex.running;
+    for (const id of ['refresh-minutes', 'save-refresh-button', 'enable-codex-button']) $(id).disabled = locked;
+    hidden('codex-refresh-form', managed && !managedConnected());
+    hidden('enable-codex-button', enabled || needsManagedLogin());
+    hidden('refresh-codex-button', managed && !managedConnected());
+    hidden('disable-codex-button', managed && !managedConnected());
+    $('disable-codex-button').disabled = locked || !enabled;
+    $('refresh-codex-button').disabled = locked || !enabled || !!codex.running;
     setText('refresh-codex-button', codex.running ? '读取中…' : '立即刷新');
     hidden('quick-refresh-button', !native);
-    $('quick-refresh-button').disabled = codexBusy || !enabled || !!codex.running;
-    $('quick-refresh-button').classList.toggle('is-refreshing', codexBusy || !!codex.running);
-    $('quick-refresh-button').setAttribute('aria-busy', String(codexBusy || !!codex.running));
-    $('quick-refresh-button').title = codexBusy || codex.running ? '正在刷新' : !enabled ? '请先在设置中开启读取' : '立即刷新';
+    $('quick-refresh-button').disabled = locked || !enabled || !!codex.running;
+    $('quick-refresh-button').classList.toggle('is-refreshing', !connecting && (codexBusy || !!codex.running));
+    $('quick-refresh-button').setAttribute('aria-busy', String(!connecting && (codexBusy || !!codex.running)));
+    $('quick-refresh-button').title = connecting ? '请先完成连接' : codexBusy || codex.running ? '正在刷新' : !enabled ? '请先开启读取' : '立即刷新';
     setText('codex-state-label', !enabled && snapshot() && current === 'disabled' ? '已停止' : labels[current] || labels.error);
     const routine = ['disabled', 'reading', 'ready'].includes(current);
     const status = !routine && typeof codex.message === 'string' && codex.message ? codex.message : messages[current] || messages.error;
@@ -155,9 +174,48 @@
     if (enabled && finite(codex.nextRunAt)) pieces.push(`下次约 ${localTime(codex.nextRunAt)}`);
     if (finite(codex.lastSuccessAt)) pieces.push(`上次 ${localTime(codex.lastSuccessAt)}`);
     setText('codex-schedule', pieces.join(' · '));
-    hidden('codex-setup', !!snapshot() && !['not-found', 'needs-login', 'unsupported', 'error'].includes(current));
+    hidden('codex-setup', managed || (!!snapshot() && !['not-found', 'needs-login', 'unsupported', 'error'].includes(current)));
+    hidden('codex-managed-controls', !managed);
+    hidden('connect-codex-button', !needsManagedLogin() && !connecting);
+    $('connect-codex-button').disabled = locked;
+    setText('connect-codex-button', connecting ? setupStatus() === 'waiting-login' ? '请在浏览器完成登录' : '正在准备组件…' : setupStatus() === 'error' || current === 'needs-login' ? '重新连接' : '连接 Codex');
+    hidden('cancel-connect-button', !connecting);
+    $('cancel-connect-button').disabled = cancelBusy;
+    setText('cancel-connect-button', cancelBusy ? '正在取消…' : '取消');
+    hidden('logout-codex-button', !hasManagedLogin());
+    $('logout-codex-button').disabled = locked;
+    hidden('codex-managed-privacy', managedConnected() || connecting);
+    setText('connection-mode-note', managed ? '自动配置使用独立的登录状态，不影响已有 Codex。' : '沿用本机 Codex 的登录；切换方式会停止刷新并清空读数。');
+    if (managed && (connecting || needsManagedLogin())) {
+      const waiting = setupStatus() === 'waiting-login';
+      setText('codex-state-label', connecting ? waiting ? '等待登录' : '正在准备' : setupStatus() === 'error' ? '连接未完成' : '待连接');
+      setText('codex-status', setupMessage());
+      setText('codex-schedule', '');
+    }
+    renderSetupProgress('codex-setup-progress', 'component-progress', 'component-progress-value');
     setText('scope-description', native ? '仅代表 Codex 服务统计，非全部 ChatGPT Token。「最近一日」采用服务端日期，并非本机今日。读取时间不代表统计更新时间。' : '仅显示官方页面已提供的指标，非全部 ChatGPT Token。读取时间不代表统计更新时间。');
-    setText('settings-source-note', native ? '停止刷新不会退出 Codex 账号。切换来源后需重新开启。Ctrl + Alt + G 展开或收起面板。' : '配对仅同步数值，不授予账号操作权限。退出后需重新配对。Ctrl + Alt + G 展开或收起面板。');
+    setText('settings-source-note', native ? managed ? '暂停仅停止刷新。退出账号只清除此工具的登录。Ctrl + Alt + G 展开或收起面板。' : '停止刷新不会退出 Codex 账号。切换来源后需重新开启。Ctrl + Alt + G 展开或收起面板。' : '配对仅同步数值，不授予账号操作权限。退出后需重新配对。Ctrl + Alt + G 展开或收起面板。');
+  }
+  function setupMessage() {
+    if (typeof state.codexSetup?.message === 'string' && state.codexSetup.message) return state.codexSetup.message;
+    if (setupStatus() === 'waiting-login') return '请在官方页面登录，完成后自动读取。';
+    if (setupInProgress()) return '首次连接需准备官方组件，请稍候。';
+    if (setupStatus() === 'error') return '连接未完成，请检查网络后重试。';
+    if (state.codex?.state === 'needs-login') return '登录已失效，请重新连接。';
+    return '登录一次，用量自动更新。';
+  }
+  function renderSetupProgress(row, progress, label) {
+    const visible = setupInProgress() && setupStatus() !== 'waiting-login';
+    hidden(row, !visible);
+    const value = state.codexSetup?.progress;
+    if (finite(value)) {
+      const percent = Math.max(0, Math.min(100, value));
+      $(progress).value = percent;
+      setText(label, `${Math.round(percent)}%`);
+    } else {
+      $(progress).removeAttribute('value');
+      setText(label, '准备中');
+    }
   }
   function renderStatus() {
     const hasSnapshot = !!snapshot();
@@ -180,7 +238,7 @@
     hidden('freshness-note', !note);
     const codexStatuses = { disabled: hasSnapshot ? '已暂停' : '未连接', reading: hasSnapshot ? '刷新中…' : '连接中…', ready: historic ? '上次记录' : '自动刷新', 'not-found': '待安装 CLI', 'needs-login': '待登录', unsupported: 'CLI 待更新', error: '读取失败' };
     const status = native ? codexStatuses[state.codex?.state || 'disabled'] || codexStatuses.error : state.status === 'starting' ? '启动中…' : state.error ? '同步异常' : !state.bridge?.listening ? '同步未启动' : !hasSnapshot ? '待配对' : isManual ? '人工记录' : isStale || !state.bridge?.connected ? '上次记录' : '浏览器同步';
-    setText('sync-status', status);
+    setText('sync-status', native && setupInProgress() ? setupStatus() === 'waiting-login' ? '等待登录' : '准备组件…' : status);
     const canPair = !native && !!state.bridge?.listening;
     for (const id of ['pair-button', 'pair-settings-button']) $(id).disabled = !canPair;
   }
@@ -281,6 +339,23 @@
     setText('empty-title', copy[0]);
     setText('empty-description', copy[1]);
     setText('configure-button', native && (!state.codex?.state || state.codex.state === 'disabled') ? '连接设置' : '查看设置');
+    const managed = native && managedMode();
+    const connecting = managed && setupInProgress();
+    const connect = managed && (connecting || needsManagedLogin());
+    if (connect) {
+      setText('empty-title', connecting ? setupStatus() === 'waiting-login' ? '完成登录即可连接' : '正在准备' : setupStatus() === 'error' ? '连接未完成' : '连接 Codex');
+      setText('empty-description', setupMessage());
+      setText('configure-button', connecting ? setupStatus() === 'waiting-login' ? '请在浏览器完成登录' : '正在准备组件…' : setupStatus() === 'error' || state.codex?.state === 'needs-login' ? '重新连接' : '连接 Codex');
+    }
+    $('configure-button').disabled = managed && (codexBusy || connecting);
+    $('empty-state').classList.toggle('is-connecting', connecting);
+    $('empty-description').setAttribute('role', 'status');
+    hidden('empty-cancel-connect-button', !connecting);
+    $('empty-cancel-connect-button').disabled = cancelBusy;
+    setText('empty-cancel-connect-button', cancelBusy ? '正在取消…' : '取消');
+    hidden('empty-privacy', !connect || connecting);
+    renderSetupProgress('empty-setup-progress', 'empty-component-progress', 'empty-component-progress-value');
+    if (!native) hidden('empty-setup-progress', true);
   }
   function render() {
     renderAppearance();
@@ -363,7 +438,7 @@
     schedulePanelResize();
   }
   async function codexAction(work) {
-    if (codexBusy) return;
+    if (codexBusy || setupInProgress()) return;
     codexBusy = true;
     renderCodexControls();
     try { await work(); } finally { codexBusy = false; render(); }
@@ -383,6 +458,24 @@
     intervalDirty = false;
     return true;
   }
+  async function connectCodex() {
+    if (!nativeMode() || !managedMode() || codexBusy || setupInProgress() || !needsManagedLogin()) return;
+    connectBusy = true;
+    render();
+    try { await action('connectCodex'); } finally { connectBusy = false; render(); }
+  }
+  async function cancelCodexConnect() {
+    if (!nativeMode() || !setupInProgress() || cancelBusy) return;
+    cancelBusy = true;
+    render();
+    try { await action('cancelCodexConnect'); } finally { cancelBusy = false; render(); }
+  }
+  $('connect-codex-button').addEventListener('click', connectCodex);
+  for (const id of ['cancel-connect-button', 'empty-cancel-connect-button']) $(id).addEventListener('click', cancelCodexConnect);
+  $('logout-codex-button').addEventListener('click', () => {
+    if (!nativeMode() || !hasManagedLogin()) return;
+    codexAction(async () => { if ((await action('logoutCodex')).ok) toast('已退出此工具的账号。'); });
+  });
   $('refresh-minutes').addEventListener('input', () => { intervalDirty = true; });
   $('usage-source').addEventListener('change', event => {
     const source = event.target.value;
@@ -390,6 +483,15 @@
     codexAction(async () => {
       if ((await action('setSettings', { usageSource: source })).ok) {
         state = { ...state, usageSource: source, settings: { ...state.settings, usageSource: source } };
+      }
+    });
+  });
+  $('codex-connection').addEventListener('change', event => {
+    const mode = event.target.value;
+    if (!['managed', 'existing'].includes(mode)) return;
+    codexAction(async () => {
+      if ((await action('setSettings', { codexConnection: mode })).ok) {
+        state = { ...state, settings: { ...state.settings, codexConnection: mode } };
       }
     });
   });
@@ -401,7 +503,7 @@
     codexAction(async () => { if (await saveMinutes(minutes)) toast('刷新间隔已保存。'); });
   });
   $('enable-codex-button').addEventListener('click', () => {
-    if (codexBusy || !nativeMode()) return;
+    if (codexBusy || setupInProgress() || !nativeMode() || needsManagedLogin()) return;
     const minutes = refreshMinutes();
     if (minutes === null) return;
     codexAction(async () => { if (await saveMinutes(minutes)) await action('enableCodex'); });
@@ -419,7 +521,10 @@
   });
   $('codex-help-button').addEventListener('click', () => action('openCodexHelp'));
   $('settings-button').addEventListener('click', () => showSettings(!settingsVisible));
-  $('configure-button').addEventListener('click', () => showSettings(true));
+  $('configure-button').addEventListener('click', () => {
+    if (nativeMode() && managedMode() && (needsManagedLogin() || setupInProgress())) connectCodex();
+    else showSettings(true);
+  });
   $('back-button').addEventListener('click', () => showSettings(false));
   $('close-button').addEventListener('click', () => action('hidePanel'));
   for (const id of ['setup-dashboard-button', 'dashboard-button', 'footer-dashboard-button']) $(id).addEventListener('click', () => action('openDashboard'));

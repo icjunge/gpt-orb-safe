@@ -10,57 +10,53 @@
 </style>
 </head>
 <body><main>
-<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.5.4</div><h1>关掉网页，<br>额度照常更新。</h1><p class="lead">Windows 10 / 11 · 64 位<br>通过本机官方 Codex CLI 定时查询，浏览器扩展保留为备用来源。刷新无需临时打开网页。</p></header>
-<div class="callout"><strong>在现有应用内更新。</strong><br>已有 2.4.1 安装版可在「设置 → 版本与更新」检查新版，下载完成后点击「重启并更新」，无需手动下载测试安装器。正式发布审批完成前不会收到新版。登录由官方 CLI 管理，悬浮球不读取或复制账号凭据文件；不发起模型任务，也不自动重置额度。</div>
-<h2>2.5.4 长按位置修复</h2>
-<p>圆球常态 48 像素、悬停 56 像素，底层透明窗口始终固定为 56 像素。悬停只改变圆球绘制与命中区域，按下和松开不再触发原生窗口缩放；仅实际拖动才更新保存位置。</p>
-<p>保留较小的百分比、内部留白与约 2.5 像素的玻璃边缘高光。中心半透明、圆外透明，圆球不启用 Acrylic；本版通过原有签名更新渠道获取。</p>
-<h2>首次连接本机 Codex</h2>
+<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.5.4</div><h1>登录一次，<br>额度随时可见。</h1><p class="lead">Windows 10 / 11 · x64<br>点击连接、官方网页登录，之后自动刷新。普通用户无需 Node.js、Git 或命令行。</p></header>
+<div class="callout"><strong>已有用户直接在应用内更新。</strong><br>设置 → 版本与更新 → 检查更新 → 重启并更新。升级保留原有连接方式、刷新设置与圆球样式；源码提交、标签或草稿不等于已正式发布。</div>
+<h2>第一次使用</h2>
 <ol>
-<li>更新至可信渠道正式发布的 2.5.4 桌面安装版。已有安装版可检查签名更新；若新包尚未发布，可按下节运行源码。先退出旧悬浮球。</li>
-<li>在 Windows PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后执行 <code>codex.cmd login</code>，在官方流程中使用与网页版相同的 ChatGPT 账号登录。已安装并登录的用户无需重复。npm 安装需要 Node.js/npm；Windows 使用 .cmd 入口，无需更改 PowerShell 执行策略。</li>
-<li>安装后重新打开终端与悬浮球，以取得最新环境。在设置「数据来源」选择「本机 Codex」。填写整数 1–1440 分钟，默认 5，点击「保存」，然后点击「开启读取」。</li>
-<li>点击「立即刷新」，确认成功读取时间及额度。以后保持悬浮球运行即可，浏览器可以关闭。</li>
+<li>从<a href="https://github.com/icjunge/gpt-orb-safe/releases/latest" rel="noopener noreferrer">正式发布页</a>下载 <code>GPT-Orb-Setup-X.Y.Z-x64.exe</code> 并安装。无需源码 ZIP 或扩展 ZIP。</li>
+<li>点击<strong>「连接 Codex」</strong>。首次准备约 85 MB 的官方组件，界面显示进度，可以取消；下载速度取决于网络。校验后的组件会缓存，同一版本无需重复下载。</li>
+<li>在自动打开的 <strong>OpenAI 官方页面</strong>登录自己的 ChatGPT 账号，并完成必要验证。不要向悬浮球提供密码、验证码或令牌。</li>
+<li>登录成功后自动显示额度，默认每 5 分钟刷新。在设置可调整为 1–1440 分钟，或立即刷新。浏览器可以关闭，悬浮球需保持运行。</li>
 </ol>
-<p>界面提供「复制安装命令」和「安装说明」，命令由你执行，工具不会自动安装或登录。首次官方登录可能打开浏览器，用量刷新不通过网页。API Key 登录不等于 ChatGPT 订阅登录，可能无法返回订阅额度。</p>
-<p>首次默认未启用；主动开启后，间隔和启用偏好保留，桌面重启会继续查询。「暂停」停止查询，不退出官方账号。切换来源后，切回本机 Codex 需再次开启。官方 CLI 是独立依赖，不随悬浮球打包或自动更新。</p>
-<p>官方说明：<a href="https://learn.chatgpt.com/docs/codex/cli" rel="noopener noreferrer">Codex CLI</a> · <a href="https://learn.chatgpt.com/docs/auth" rel="noopener noreferrer">认证与凭据</a> · <a href="https://learn.chatgpt.com/docs/app-server" rel="noopener noreferrer">App Server</a>。</p>
-<h2>已有源码时运行新版</h2>
-<p>退出旧桌面程序。在可信仓库目录依次执行 <code>git pull --ff-only</code>、<code>npm ci</code>、<code>npm start</code>，每一步成功后再运行下一步。<code>npm ci</code> 需要网络下载固定依赖与 Electron，不要加 <code>--ignore-scripts</code>。</p>
-<p>源码运行不更新原安装版，也不提供安装版自动更新；仅 <code>npm run extension:update</code> 不能启用 CLI 来源。源码提交和草稿 Release 不等于正式安装包已发布。</p>
+<p>连接失败可「重新连接」，等待登录时可「取消」；登录过期需再次连接。安装和首次启动本身不会发起登录或读取账号。API Key 不等于 ChatGPT 订阅登录，可能无法返回订阅额度。</p>
+<h2>暂停、退出与已有 Codex</h2>
+<table><thead><tr><th>操作</th><th>结果</th></tr></thead><tbody>
+<tr><td>暂停</td><td>停止刷新，保留登录和上次读数。</td></tr>
+<tr><td>退出此账号</td><td>自动配置模式下退出本工具的独立登录，停止刷新并清除读数。退出失败可重试。</td></tr>
+<tr><td>切换连接方式</td><td>停止刷新并清空当前读数，不退出原账号，不把两种来源混成一份数据。</td></tr>
+<tr><td>关闭 / 卸载</td><td>不等于退出账号；卸载前如需清除登录，先点击「退出此账号」。</td></tr>
+</tbody></table>
+<p>旧用户升级后沿用已有 CLI，不强制登录。想改为一键连接，在「设置 → 已有 Codex / 手动设置 → 连接方式」选「自动配置（推荐）」，再连接。</p>
+<details><summary>高级：继续使用本机已安装的 Codex</summary><p>选择「使用本机已安装的 Codex」，沿用其账号和原凭据配置，应用不会自动安装、登录、升级或退出该 CLI。首次手动安装可在 PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后 <code>codex.cmd login</code>。仅这种方式需要 Node.js/npm；无需修改 PowerShell 执行策略。安装后重启终端与悬浮球，再点击「开启读取」。</p></details>
+<h2>分享给朋友</h2>
+<p>分享<a href="https://github.com/icjunge/gpt-orb-safe/releases/latest" rel="noopener noreferrer">正式发布页</a>或其中的 x64 EXE 即可，对方安装后登录自己的账号。以后在应用内更新。<strong>不要分享用户数据目录、登录状态、配对码或发布私钥。</strong></p>
+<p>应用更新使用 Ed25519 验签；这不等于 Windows Authenticode 发布者证书。当前安装包没有 Windows 发布者签名，系统可能提示未知发布者，请核对来源。</p>
 <h2>读数表示什么</h2>
 <table><thead><tr><th>显示内容</th><th>含义</th></tr></thead><tbody>
-<tr><td>额度窗口</td><td>官方返回的已用 / 剩余比例，各窗口独立，不相加。</td></tr>
-<tr><td>重置倒计时</td><td>依据官方返回时间计算，归零不自行补满额度。</td></tr>
-<tr><td>剩余重置次数</td><td>仅在响应提供时显示，未知为「—」。不会执行重置。</td></tr>
-<tr><td>独立额度</td><td>仅展示实际返回记录；没有 Spark 记录时不编造独立周额度。</td></tr>
-<tr><td>最近一日 Token</td><td>协议支持时返回的服务端最新日桶，显示对应日期；不是本机今日 Token。</td></tr>
-<tr><td>服务端累计 Token</td><td>官方返回范围内的累计；不扫描本机日志，不承诺覆盖全部 ChatGPT 对话或 API 账单。</td></tr>
-<tr><td>成功读取时间</td><td>表示查询成功，不代表官方服务器统计刚刚更新。</td></tr>
+<tr><td>剩余额度</td><td>官方返回的独立窗口，各自显示，不相加。未返回 Spark 等独立窗口时不编造。</td></tr>
+<tr><td>重置倒计时</td><td>根据官方重置时刻计算，归零不自行补满。</td></tr>
+<tr><td>重置次数</td><td>仅在官方明确返回时显示；工具不执行重置。</td></tr>
+<tr><td>Token</td><td>协议支持时返回的服务端范围与最新日桶，不是本机今日总量或全部 ChatGPT / API 账单。未知时隐藏模块。</td></tr>
+<tr><td>读取时间</td><td>表示查询成功，不代表官方统计刚刚更新。</td></tr>
 </tbody></table>
-<p>CLI 缺失、登录过期、离线或接口变化时显示提示，保留上次成功记录和时间；未知项不推算。电脑休眠和服务端统计延迟会影响更新。App Server 属实验性接口，不能保证所有 CLI 版本与账号结构都兼容。</p>
-<h2>浏览器扩展作为备用</h2>
-<ol>
-<li>设置「数据来源」选择「浏览器扩展」。打开固定扩展文件夹，通常是 <code>%APPDATA%\GPT Usage Orb Safe\Browser-Extension</code>。</li>
-<li>Chrome 打开 <code>chrome://extensions</code>，Edge 打开 <code>edge://extensions</code>，开启开发者模式并加载该目录。选中的目录必须直接含 <code>manifest.json</code>，不要双击 <code>popup.html</code>。</li>
-<li>访问 <a href="https://chatgpt.com/settings/usage?tab=overview" rel="noopener noreferrer">官方用量页</a>并完成官方登录。复制悬浮球当前配对码，在浏览器工具栏的扩展中粘贴并连接。</li>
-</ol>
-<p>当前页面模式需保留用量页。扩展的备用「后台定时刷新」需主动授予 <code>https://chatgpt.com/*</code> 权限，每轮临时打开非活动用量页；只清理本轮创建且未被用户接管的页面。浏览器授权覆盖整个来源，代码只接受两个精确用量路径。</p>
-<p><strong>浏览器备用模式需要浏览器运行，本机 Codex 模式不需要。</strong>桌面退出、浏览器重启或扩展重载会使配对失效，扩展重启还需重新开启定时。迁移到本机 Codex 前，请在扩展点击「关闭并撤销授权」，避免旧任务继续尝试打开页面。</p>
-<p>只维护扩展时，在可信仓库执行 <code>git pull --ff-only</code>，成功后执行 <code>npm run extension:update</code>，再在浏览器重新加载并配对。该命令不更新桌面。浏览器仍加载 Downloads 旧目录时需先迁移到固定目录一次。</p>
-<h2>日常使用与应用更新</h2>
-<p>移上悬浮球放大，移开收起；拖动移动，点击打开 / 收起详情面板。托盘及 <code>Ctrl + Alt + G</code> 可找回面板。设置可调整置顶、透明度、提醒和开机启动，开机启动默认关闭。</p>
-<p>已配置更新源的安装版启动约 10 秒后、此后每 6 小时检查更新，也可手动检查。验证 Ed25519 发布签名后下载，再校验完整性；由你点击「重启并更新」。普通退出不安装待更新包，失败保留当前版本。更新包含桌面、Electron 和备用扩展，不包含官方 CLI。</p>
-<p>显示设置和位置保留。固定目录的扩展若更新需在浏览器手动重新加载，重新配对；仅使用本机 Codex 无需加载扩展。开发运行、旧便携版和未配置发布源的安装版没有安装版自动更新能力。</p>
-<p>安装前在 <code>recovery</code> 备份偏好设置，<strong>不是完整程序快照或 NSIS 原子回滚</strong>。安装中断可能需可信安装包修复；手动恢复设置前先退出程序。</p>
-<h2>账号和安全边界</h2>
-<p>悬浮球通过 stdio 发送固定查询，不读取或复制 <code>auth.json</code>、Cookie、密码或令牌，不记录原始 RPC，不扫描本机会话日志。官方 CLI 自己管理登录及续期，可能读写自己的凭据；文件或系统凭据库存储取决于原配置，不能承诺天然加密。</p>
-<p>浏览器备用模式只向 <code>127.0.0.1:43861</code> 发送数值，校验来源、配对与字段。切换来源不会因 CLI 失败而自动打开网页，也不把两种记录混成账号总量。</p>
-<p>更新访问固定 GitHub Release 来源，不含用量和账号凭据，不需要客户端 GitHub 登录或 PAT。没有自建云用量同步或额外遥测。<strong>Ed25519 更新签名不等于 Windows Authenticode 发布者证书</strong>，当前没有 Windows 发布者签名。</p>
-<p>本工具不能防御已控制本机、CLI 或浏览器的恶意软件。停止读取或卸载不等于退出官方登录；需要时自行使用 <code>codex.cmd logout</code>。1.0.0 的旧凭据仍需单独通过旧版或官方会话管理撤销。</p>
-<h2>验证与卸载</h2>
-<p>自动测试使用合成协议和数据，覆盖查询、异常、来源切换、数据校验及既有更新边界。<strong>真实 Windows 安装 / 升级、官方 CLI 登录及账号额度仍需实机验收。</strong>已有 Electron / MV3 检查也不等于完整 Chrome / Edge 权限流程通过。</p>
-<p>卸载前停止开机启动并退出悬浮球，不再使用扩展时在浏览器移除，再从 Windows 已安装应用卸载。用户目录默认保留设置和备份。卸载悬浮球不卸载 CLI，也不退出官方账号。</p>
+<p>普通查询失败保留上次有效记录，退出或账号变化时清除旧账号读数。离线、睡眠、服务端延迟或接口变更可能影响刷新，无法识别的字段保持未知。</p>
+<h2>账号与安全</h2>
+<p>自动配置下载固定 <strong>0.134.0</strong> 官方组件，分别校验压缩包和可执行文件的固定长度及 SHA-256。使用独立 <code>CODEX_HOME</code>，登录由官方组件保存到系统凭据库；系统库不可用时连接失败，不回退明文文件，不覆盖已有 CLI 登录。</p>
+<p>悬浮球不读取或复制 <code>auth.json</code>、Cookie、密码或令牌，不记录原始 RPC，不扫描会话日志。已有 CLI 模式的文件 / 系统凭据库策略仍取决于该 CLI 的原配置。</p>
+<p><strong>这是正常 Codex 账号授权，不是仅限用量的 OAuth scope。</strong>应用限制自身操作为连接、取消、退出和固定查询，不发起模型任务、对话或额度重置；不能把界面限制当作凭据权限本身的限制。</p>
+<p>组件下载和应用更新不携带账号凭据，无需 GitHub 登录或 PAT；没有自建云用量同步或额外遥测。工具不能防御已控制本机的恶意软件。</p>
+<h2>浏览器扩展备用方式</h2>
+<p>仅主动选择「浏览器扩展」来源时需要。在桌面打开固定扩展目录，Chrome / Edge 开启开发者模式后加载直接包含 <code>manifest.json</code> 的目录，再打开<a href="https://chatgpt.com/settings/usage?tab=overview" rel="noopener noreferrer">官方用量页</a>并配对。</p>
+<p>浏览器备用模式需要浏览器运行：当前页模式需保留页面；可选定时模式授权后会临时打开非活动用量页。退出、浏览器重启或扩展重载后需重新配对。改用本机读取后，建议在扩展点击「关闭并撤销授权」。不需要备用模式就无需安装扩展。</p>
+<h2>日常使用与更新</h2>
+<p>圆球常态 48 像素，悬停 56 像素，始终只显示百分比。固定透明窗口、玻璃边缘与长按位置修复保留。拖动移动，点击开关面板；托盘或 <code>Ctrl + Alt + G</code> 可找回面板。</p>
+<p>已配置的安装版启动约 10 秒后、此后每 6 小时检查更新，也可手动检查或关闭自动检查。签名、版本、长度和哈希验证通过后，由你点击「重启并更新」。普通退出不会安装待更新包。</p>
+<p>应用更新包含桌面、Electron 和备用扩展；官方组件独立下载并缓存，已有 CLI 不由应用更新。安装前备份偏好设置；这不是完整程序快照或自动回滚，安装中断可能需要可信安装器修复。</p>
+<h2>卸载与验证范围</h2>
+<p>自动配置用户需要清除登录时，先点击「退出此账号」并确认成功。关闭开机启动、退出应用，再从 Windows 已安装应用卸载；不再使用的浏览器扩展可移除。用户目录默认保留，删除目录不能保证移除系统凭据库登录。</p>
+<p>自动测试覆盖组件、登录状态、查询及更新边界，模拟协议不会使用真实账号。干净 Windows 的首次安装、真实官方网页登录与额度读取仍需实机验收；实际完成范围以发布记录为准。</p>
+<details><summary>开发者：源码与维护</summary><p>可信仓库内执行 <code>npm ci</code>、<code>npm test</code>、<code>npm start</code>；开发需要 Node.js 22.12+，不要跳过 Electron 安装脚本。源码运行不更新现有安装版。<code>npm run extension:update</code> 只维护固定扩展目录，不能更新桌面。</p></details>
 <p>完整说明：<a href="README.md">README.md</a> · <a href="SECURITY.md">SECURITY.md</a> · <a href="RELEASE.md">发布流程</a>。</p>
 <footer>GPT 悬浮球 2.5.4 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>
 </main></body></html>

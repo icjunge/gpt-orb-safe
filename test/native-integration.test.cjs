@@ -15,9 +15,9 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false, workArea={x:0,y:0,width:1920,height:1080}} = {}) {
+async function launch({preferences, managedLogin, managedStop, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false, workArea={x:0,y:0,width:1920,height:1080}} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
-  const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[]};
+  const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[],componentDownloads:0,componentChecks:0,managedLogins:[],managedLogouts:[]};
   const userData = '/virtual-orb/user-data';
   const preferencesPath = path.join(userData, 'preferences.json');
   if (preferences) files.set(preferencesPath, JSON.stringify(preferences));
@@ -77,6 +77,7 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     getStatus(){return {...this.status};}
     start(minutes){this.starts.push(minutes); Object.assign(this.status,{enabled:true,state:'idle',intervalMinutes:minutes}); this.options.onState();}
     stop(){this.stops += 1; Object.assign(this.status,{enabled:false,running:false,state:'disabled'}); this.options.onState();}
+    async stopAndWait(){this.stop();await managedStop?.();}
     refresh(){this.refreshes += 1;}
     emitSnapshot(snapshot){this.options.onSnapshot(snapshot);}
     clear(){this.options.onClear();}
@@ -93,6 +94,8 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
   }
   const electron={
     app,BrowserWindow:Window,Tray,nativeTheme,
+    session:{fromPartition:(name,options)=>{assert.equal(name,'codex-component-download');assert.equal(options.cache,false);return{};}},
+    net:{request:()=>assert.fail('controller tests cannot access network')},
     ipcMain:{handle:(channel, handler)=>handlers.set(channel,handler)},
     screen:Object.assign(new EventEmitter(),{
       getPrimaryDisplay:()=>({workArea}),
@@ -119,6 +122,14 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
     './extension-store.cjs':{syncExtension:async()=>({path:'/virtual-orb/extension',version:'2.3.0',changed:false})},
     './updater.cjs':{UpdateManager:class {constructor(){throw new Error('not packaged');}}},
     './codex-provider.cjs':{CodexProvider:Provider},
+    './codex-setup.cjs':require('../src/codex-setup.cjs'),
+    './codex-directories.cjs':{prepareManagedDirectories:async()=>({codexHome:'/virtual-orb/user-data/codex-managed-home',cwd:'/virtual-orb/user-data/codex-query'})},
+    './codex-runtime.cjs':{createCodexRuntime:()=>({
+      async ensureReady(){calls.componentDownloads++;return '/virtual-orb/managed/codex.exe';},
+      async getVerifiedExecutable(){calls.componentChecks++;return '/virtual-orb/managed/codex.exe';}})},
+    './codex-auth.cjs':{
+      loginManagedCodex:async options=>{calls.managedLogins.push(options);return managedLogin?managedLogin(options):{connected:true};},
+      logoutManagedCodex:async options=>{calls.managedLogouts.push(options);return{connected:false};}},
     './window-material.cjs':require('../src/window-material.cjs'),
     './orb-window.cjs':require('../src/orb-window.cjs'),
     './codex-discovery.cjs':{discoverCodex:()=>{calls.discover += 1;throw new Error('discovery must not execute in controller tests');}}
@@ -126,7 +137,7 @@ async function launch({preferences, bridgeFails = false, release = '10.0.22631',
   vm.runInNewContext(mainSource, {
     require:name=>{assert.ok(Object.hasOwn(modules,name),`Unexpected dependency: ${name}`);return modules[name];},
     __dirname:path.dirname(mainFile),
-    process:{platform:'win32',argv:[],env:{},execPath:'/virtual-orb/orb.exe',resourcesPath:'/virtual-orb/resources'},
+    process:{platform:'win32',arch:'x64',argv:[],env:{},execPath:'/virtual-orb/orb.exe',resourcesPath:'/virtual-orb/resources'},
     setTimeout:addTimer,setInterval:addTimer,clearTimeout:id=>timers.delete(id),clearInterval:id=>timers.delete(id)
   },{filename:mainFile});
   await settle();
@@ -635,7 +646,8 @@ test('native errors retain the last reading, while an explicit account-clear rem
   const previous=reading();h.provider.emitSnapshot(previous);
   h.provider.emitStatus({state:'needs-login',message:'Log in to the official CLI'});
   assert.equal(h.state().status,'error');
-  assert.equal(h.state().error,'Log in to the official CLI');
+  assert.equal(h.state().error,'登录已失效，请重新连接。');
+  assert.equal(h.state().codexSetup.status,'error');
   assert.deepEqual(h.state().snapshot,previous);
   h.provider.clear();
   assert.equal(h.state().snapshot,null);
@@ -669,4 +681,89 @@ test('quitting stops the native provider, closes the bridge and cancels timers; 
   assert.equal(h.state().snapshot,null);
   h.provider.emitSnapshot(reading('codex-cli',99));
   assert.equal(h.state().snapshot,null);
+});
+
+test('first launch has an explicit managed connection with no download, discovery, login or read',async()=>{
+  const h=await launch();
+  assert.equal(h.state().settings.codexConnection,'managed');
+  assert.equal(h.state().codexSetup.status,'idle');
+  assert.equal(h.calls.componentDownloads,0);assert.equal(h.calls.componentChecks,0);
+  assert.equal(h.calls.managedLogins.length,0);assert.equal(h.calls.discover,0);
+  assert.deepEqual(h.provider.starts,[]);
+});
+
+test('managed connect is panel-only and accepts no renderer supplied login arguments',async()=>{
+  const h=await launch(),orb=h.windows[0].webContents,orbEvent={sender:orb,senderFrame:orb.mainFrame};
+  for(const name of ['connectCodex','cancelCodexConnect','logoutCodex']){
+    assert.equal((await h.action(name,undefined,orbEvent)).ok,false);
+    assert.equal((await h.action(name,{url:'https://untrusted.invalid',codexHome:'/wrong'})).ok,false);
+  }
+  assert.equal(h.calls.componentDownloads,0);
+  assert.equal((await h.action('connectCodex')).ok,true);
+  assert.equal(h.calls.componentDownloads,1);assert.equal(h.calls.managedLogins.length,1);
+  assert.equal(h.calls.managedLogins[0].codexHome,'/virtual-orb/user-data/codex-managed-home');
+  assert.equal(h.state().settings.codexEnabled,true);assert.equal(h.state().codexSetup.hasLogin,true);
+  assert.equal(h.state().codexSetup.status,'connected');assert.deepEqual(h.provider.starts,[5]);
+  assert.equal(h.saved().settings.codexManagedConnected,true);
+  const target=await h.provider.options.discover();
+  assert.equal(target.path,'/virtual-orb/managed/codex.exe');assert.equal(target.codexHome,'/virtual-orb/user-data/codex-managed-home');
+  assert.equal(h.calls.discover,0);
+  assert.equal((await h.action('logoutCodex')).ok,true);
+  assert.equal(h.calls.managedLogouts.length,1);assert.equal(h.state().codexSetup.hasLogin,false);
+  assert.equal(h.state().settings.codexEnabled,false);assert.equal(h.state().snapshot,null);
+});
+
+test('old local CLI users, including paused ones, migrate without replacing their account or installing components',async()=>{
+  for(const enabled of [false,true]){
+    const h=await launch({preferences:{settings:{usageSource:'codex-cli',codexEnabled:enabled}}});
+    assert.equal(h.state().settings.codexConnection,'existing');
+    assert.equal(h.calls.componentDownloads,0);assert.equal(h.calls.managedLogins.length,0);
+    assert.equal((await h.action('connectCodex')).ok,false);
+    assert.deepEqual(h.provider.starts,enabled?[5]:[]);
+  }
+});
+
+test('managed login metadata restores paused logout controls without opening a browser or changing auth',async()=>{
+  const h=await launch({preferences:{settings:{usageSource:'codex-cli',codexConnection:'managed',codexEnabled:false,codexManagedConnected:true}}});
+  assert.equal(h.state().codexSetup.hasLogin,true);assert.equal(h.state().codexSetup.status,'connected');
+  assert.deepEqual(h.provider.starts,[]);assert.equal(h.calls.componentDownloads,0);assert.equal(h.calls.managedLogins.length,0);
+  await h.action('setSettings',{codexManagedConnected:false});
+  assert.equal(h.state().codexSetup.hasLogin,true,'renderer cannot fabricate or erase authentication metadata');
+});
+
+test('managed component damage and expired auth offer repair while keeping logout available',async()=>{
+  const h=await launch({preferences:{settings:{usageSource:'codex-cli',codexConnection:'managed',codexEnabled:true,codexManagedConnected:true}}});
+  for(const state of ['not-found','needs-login','unsupported']){
+    h.provider.emitStatus({state,message:'Old manual CLI instructions'});
+    assert.equal(h.state().codexSetup.status,'error');assert.equal(h.state().codexSetup.hasLogin,true);
+    assert.match(h.state().codexSetup.message,/重新连接/);
+    assert.doesNotMatch(h.state().codexSetup.message,/Old manual/);
+  }
+  assert.equal(h.calls.componentDownloads,0,'repair requires an explicit click');
+});
+
+test('pending login blocks mode changes and refresh; cancellation cannot re-enable a late login',async()=>{
+  let finish;
+  const h=await launch({managedLogin:()=>new Promise(resolve=>{finish=resolve;})});
+  const connecting=h.action('connectCodex');await settle();
+  assert.equal((await h.action('setSettings',{codexConnection:'existing'})).ok,false);
+  assert.equal((await h.action('setSettings',{usageSource:'browser'})).ok,false);
+  assert.equal((await h.action('enableCodex')).ok,false);
+  assert.equal((await h.action('refreshCodex')).ok,false);
+  const cancelled=h.action('cancelCodexConnect');await settle();
+  finish({connected:true});await connecting;await cancelled;
+  assert.equal(h.state().settings.codexEnabled,false);assert.equal(h.state().codexSetup.status,'idle');
+  assert.equal(h.state().snapshot,null);assert.deepEqual(h.provider.starts,[]);
+});
+
+test('managed auth waits for a prior quota child and does not start after a failed drain',async()=>{
+  let release;
+  const h=await launch({managedStop:()=>new Promise(resolve=>{release=resolve;})});
+  const connect=h.action('connectCodex');await settle();
+  assert.equal(h.calls.componentDownloads,0);assert.equal(h.calls.managedLogins.length,0);
+  release();assert.equal((await connect).ok,true);assert.equal(h.calls.managedLogins.length,1);
+  const blocked=await launch({managedStop:async()=>{throw Object.assign(new Error('private child details'),{code:'login-busy'});}});
+  assert.equal((await blocked.action('connectCodex')).ok,false);
+  assert.equal(blocked.calls.componentDownloads,0);assert.equal(blocked.calls.managedLogins.length,0);
+  assert.doesNotMatch(JSON.stringify(blocked.state()),/private child details/);
 });

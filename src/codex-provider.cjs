@@ -4,6 +4,7 @@ const {spawn} = require('node:child_process');
 const {createHash} = require('node:crypto');
 const path = require('node:path');
 const {StringDecoder} = require('node:string_decoder');
+const {MANAGED_CODEX_ARGS, managedCodexEnv} = require('./codex-auth.cjs');
 
 // No renderer-controlled method, command, arguments, URL or credentials reach this adapter.
 const METHODS = new Set(['initialize', 'account/read', 'account/rateLimits/read', 'account/usage/read']);
@@ -12,6 +13,16 @@ const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_STDERR_BYTES = 256 * 1024;
 const MAX_MESSAGES = 512;
 const MAX_WINDOWS = 32;
+// A managed usage read can refresh and persist official credentials. Retain its
+// process lock until actual exit, even if its request or cancellation timed out.
+const managedProcesses = new Map();
+const homeKey = value => path.resolve(value).toLowerCase();
+function boundedExit(promise) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new CodexReadError('busy')), 2500);
+  })]).finally(() => clearTimeout(timer));
+}
 const MESSAGES = Object.freeze({
   disabled: '本机 Codex 自动刷新已关闭。',
   reading: '正在通过本机官方 Codex 查询用量…',
@@ -24,6 +35,7 @@ const MESSAGES = Object.freeze({
   'empty-data': '服务暂未返回可识别的用量，已保留上次有效读数。',
   timeout: '本机 Codex 查询超时，已保留上次有效读数。',
   protocol: '本机 Codex 返回了无法验证的响应，已保留上次有效读数。',
+  busy: '上一次本机查询尚未完全退出，请稍候重试。',
   aborted: '本次查询已取消。'
 });
 
@@ -119,7 +131,12 @@ function normalizeSnapshot(limits, usage, capturedAt) {
 }
 
 /** A bounded JSONL connection used for one read, never an agent session. */
-function connection({executable, cwd, signal, spawnImpl, timeoutMs}) {
+function connection({executable, cwd, codexHome, signal, spawnImpl, timeoutMs}) {
+  const managedKey = codexHome ? homeKey(codexHome) : null;
+  if (managedKey && managedProcesses.has(managedKey)) throw new CodexReadError('busy');
+  let confirmExit;
+  const terminated = new Promise(resolve => { confirmExit = resolve; });
+  const processRecord = {done:terminated};
   let child;
   let ended = false;
   let failure = null;
@@ -207,16 +224,22 @@ function connection({executable, cwd, signal, spawnImpl, timeoutMs}) {
   }
   if (signal?.aborted) throw new CodexReadError('aborted');
   try {
-    child = spawnImpl(executable, ['--disable', 'plugins', '--disable', 'remote_plugin', '--disable', 'hooks', 'app-server', '--strict-config'], {
+    child = spawnImpl(executable, codexHome ? [...MANAGED_CODEX_ARGS] : ['--disable', 'plugins', '--disable', 'remote_plugin', '--disable', 'hooks', 'app-server', '--strict-config'], {
       cwd, shell:false, windowsHide:true, stdio:['pipe', 'pipe', 'pipe'],
       // Per-process restrictions only; never overwrite Codex's persisted settings.
-      env:{...process.env, CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED:'1'}
+      env:codexHome ? managedCodexEnv(codexHome) : {...process.env, CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED:'1'}
     });
   } catch (error) { throw new CodexReadError(error?.code === 'ENOENT' ? 'not-found' : 'error'); }
+  if (managedKey) managedProcesses.set(managedKey, processRecord);
   if (!child?.stdin || !child?.stdout || !child?.stderr || typeof child.on !== 'function') { stopChild(); throw new CodexReadError('error'); }
   child.on('error', error => fault(error?.code === 'ENOENT' ? 'not-found' : 'error'));
-  child.on('close', code => { exited = true; clearTimeout(killTimer); if (!ended) fault(code === 2 ? 'unsupported' : 'error'); });
-  child.on('exit', code => { exited = true; clearTimeout(killTimer); if (!ended) fault(code === 2 ? 'unsupported' : 'error'); });
+  const onExit = code => {
+    exited = true; confirmExit(); clearTimeout(killTimer);
+    if (managedKey && managedProcesses.get(managedKey) === processRecord) managedProcesses.delete(managedKey);
+    if (!ended) fault(code === 2 ? 'unsupported' : 'error');
+  };
+  child.on('close', onExit);
+  child.on('exit', onExit);
   child.stdin.on('error', () => fault('error'));
   child.stdout.on('error', () => fault('error'));
   child.stderr.on('error', () => fault('error'));
@@ -239,13 +262,15 @@ function connection({executable, cwd, signal, spawnImpl, timeoutMs}) {
       });
     },
     initialized() { write({method:'initialized', params:{}}); },
-    close() { finish(); }
+    close() { finish(); },
+    async stopAndWait() { finish(); if (!exited) await boundedExit(terminated); }
   };
 }
 
-async function readCodexUsage({executable, cwd, signal, spawnImpl = spawn, timeoutMs = 30000} = {}) {
+async function readCodexUsage({executable, cwd, codexHome, signal, spawnImpl = spawn, timeoutMs = 30000} = {}) {
   if (typeof executable !== 'string' || !path.isAbsolute(executable) || /\.(?:bat|cmd|ps1|m?js|cjs)$/i.test(executable) || typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new CodexReadError('not-found');
-  const channel = connection({executable, cwd, signal, spawnImpl, timeoutMs:Math.max(1, Math.min(60000, Number.isFinite(timeoutMs) ? timeoutMs : 30000))});
+  if (codexHome !== undefined && (typeof codexHome !== 'string' || !path.isAbsolute(codexHome))) throw new CodexReadError('not-found');
+  const channel = connection({executable, cwd, codexHome, signal, spawnImpl, timeoutMs:Math.max(1, Math.min(60000, Number.isFinite(timeoutMs) ? timeoutMs : 30000))});
   let identity = null;
   let accountIdentity = null;
   try {
@@ -279,7 +304,7 @@ async function readCodexUsage({executable, cwd, signal, spawnImpl = spawn, timeo
     if (!safe.identity) safe.identity = identity;
     if (!safe.accountIdentity) safe.accountIdentity = accountIdentity;
     throw safe;
-  } finally { channel.close(); }
+  } finally { if (codexHome) await channel.stopAndWait(); else channel.close(); }
 }
 
 function validMinutes(value) { return Number.isInteger(value) && value >= 1 && value <= 1440; }
@@ -289,6 +314,8 @@ class CodexProvider {
   #generation = 0;
   #active = null;
   #timer = null;
+  #outstanding = new Set();
+  #managedHomes = new Set();
   constructor({discover, cwd, onState = () => {}, onSnapshot = () => {}, onClear = () => {}, intervalMinutes = 5, read = readCodexUsage, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout} = {}) {
     if (typeof discover !== 'function') throw new TypeError('Codex discovery is required.');
     this.discover = discover;
@@ -334,6 +361,15 @@ class CodexProvider {
     this.#emit();
     return this.getStatus();
   }
+  async stopAndWait() {
+    this.stop();
+    // stop() intentionally clears #active for synchronous pause semantics. The
+    // separate set retains older reads which have not finished their cleanup.
+    await boundedExit(Promise.allSettled([...this.#outstanding]));
+    const children = [...this.#managedHomes].map(key => managedProcesses.get(key)?.done).filter(Boolean);
+    await boundedExit(Promise.all(children));
+    return this.getStatus();
+  }
   refresh() {
     if (!this.status.enabled) return Promise.resolve(this.getStatus());
     if (this.#active) return this.#active.promise;
@@ -351,10 +387,12 @@ class CodexProvider {
       await Promise.resolve();
       try {
         if (!current()) return this.getStatus();
-        const executable = await this.discover();
+        const executable = await this.discover({signal:controller.signal});
         if (!current()) return this.getStatus();
         if (!executable || typeof executable.path !== 'string') throw new CodexReadError('not-found');
-        const result = await this.read({executable:executable.path, cwd:this.cwd, signal:controller.signal});
+        if (executable.codexHome) this.#managedHomes.add(homeKey(executable.codexHome));
+        const result = await this.read({executable:executable.path, cwd:this.cwd, signal:controller.signal,
+          ...(executable.codexHome ? {codexHome:executable.codexHome} : {})});
         if (!current()) return this.getStatus();
         if (!result || !record(result.snapshot) || typeof result.identity !== 'string' || !/^[a-f0-9]{64}$/.test(result.identity)) throw new CodexReadError('protocol');
         if (this.#identity !== null && result.identity !== this.#identity) { this.onClear(); this.status.lastSuccessAt = null; }
@@ -386,6 +424,8 @@ class CodexProvider {
       }
       return this.getStatus();
     })();
+    this.#outstanding.add(active.promise);
+    active.promise.then(() => this.#outstanding.delete(active.promise), () => this.#outstanding.delete(active.promise));
     this.#emit();
     return active.promise;
   }

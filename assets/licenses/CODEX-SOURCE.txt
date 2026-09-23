@@ -1,0 +1,23 @@
+OpenAI Codex CLI 0.134.0 (Windows x64)
+
+This application downloads the unmodified official native CLI only after the
+user requests connection. It is cached separately from the application. It is
+not bundled in the GPT Orb installer and does not require Node.js, npm or Git.
+
+Source and release:
+https://github.com/openai/codex/tree/rust-v0.134.0
+https://github.com/openai/codex/releases/tag/rust-v0.134.0
+
+Official archive: codex-x86_64-pc-windows-msvc.exe.tar.gz
+GitHub release asset ID: 430436498
+Size: 84510636 bytes
+SHA256: 4bbcd30139d026fde8b52f8a70c1bce9149fe09c7c19eab47ac3f491d54af26e
+
+Official executable: codex-x86_64-pc-windows-msvc.exe
+GitHub release asset ID: 430436520
+Size: 240159536 bytes
+SHA256: 1766ac7dfbf4c7ddb26380e55f52c6c83847a9724294d88902ea3c5650fec134
+
+Upstream LICENSE and NOTICE are reproduced alongside this file. The source
+repository contains dependencies and their licensing metadata. GPT Orb does
+not modify or recompile the official executable or represent it as its own.
