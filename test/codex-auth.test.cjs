@@ -68,11 +68,11 @@ function fixture(handler = () => undefined, {onKill} = {}) {
   return {calls, opened, statuses, children, emit, complete, spawnImpl, get connected() { return connected; }, get child() { return child; }, get spawned() { return spawned; }};
 }
 function login(f, options = {}) {
-  return loginManagedCodex({executable:EXE, codexHome:HOME, cwd:CWD, spawnImpl:f.spawnImpl, checkPort:async () => {},
+  return loginManagedCodex({executable:EXE, codexHome:HOME, cwd:CWD, platform:'win32', spawnImpl:f.spawnImpl, checkPort:async () => {},
     openExternal:async url => { f.opened.push(url); queueMicrotask(() => f.complete()); },
     onStatus:status => f.statuses.push(status), ...options});
 }
-function logout(f, options = {}) { return logoutManagedCodex({executable:EXE, codexHome:HOME, cwd:CWD, spawnImpl:f.spawnImpl, ...options}); }
+function logout(f, options = {}) { return logoutManagedCodex({executable:EXE, codexHome:HOME, cwd:CWD, platform:'win32', spawnImpl:f.spawnImpl, ...options}); }
 const rejectsCode = (promise, code) => assert.rejects(promise, error => error instanceof CodexAuthError && error.code === code && error.message.length < 100 && !/private|secret|Bearer|https:/.test(error.message));
 
 test('managed login opens only official authorization and reports sanitized verified account status', async () => {
@@ -398,4 +398,51 @@ test('absolute native .exe and controlled directories are required, and spawn er
   }
   for (const options of [{codexHome:'.codex'}, {cwd:'.'}, {cwd:CWD + '\u0000evil'}]) await rejectsCode(login(fixture(), options), 'not-found');
   await rejectsCode(login(fixture(), {spawnImpl:() => { throw Object.assign(new Error('private file path'), {code:'ENOENT'}); }}), 'not-found');
+});
+
+test('macOS managed native binary uses isolated keychain mode and official login/logout without a shell', async () => {
+  const f = fixture();
+  const executable = path.resolve('fixture-managed', 'codex');
+  assert.deepEqual(await login(f, {platform:'darwin', executable}), {connected:true});
+  assert.equal(f.spawned.executable, executable);
+  assert.equal(f.spawned.options.shell, false);
+  assert.equal(f.spawned.options.env.CODEX_HOME, HOME);
+  assert.ok(f.spawned.args.includes('cli_auth_credentials_store="keyring"'));
+  assert.deepEqual(await logout(f, {platform:'darwin', executable}), {connected:false});
+  assert.equal(f.connected, false);
+});
+
+test('macOS rejects Windows executables, script shims, relative paths and unsupported host platforms', async () => {
+  for (const executable of [EXE, path.resolve('fixture-managed', 'codex.sh'), path.resolve('fixture-managed', 'codex.js'), 'codex']) {
+    const f = fixture();
+    await rejectsCode(login(f, {platform:'darwin', executable}), 'not-found');
+    await rejectsCode(logout(f, {platform:'darwin', executable}), 'not-found');
+    assert.equal(f.children.length, 0);
+  }
+  const f = fixture();
+  await rejectsCode(login(f, {platform:'linux'}), 'unsupported');
+  await rejectsCode(logout(f, {platform:'linux'}), 'unsupported');
+  await rejectsCode(login(f, {platform:'win32', executable:path.resolve('fixture-managed', 'codex')}), 'not-found');
+  assert.equal(f.children.length, 0);
+});
+
+test('macOS cancellation waits for its own native process and removes only its isolated login', async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  const executable = path.resolve('fixture-managed', 'codex');
+  await rejectsCode(login(f, {platform:'darwin', executable, signal:controller.signal,
+    openExternal:async () => { controller.abort(); }}), 'cancelled');
+  assert.equal(f.connected, false);
+  assert.equal(f.children.length, 2);
+  assert.equal(f.children[0].kills[0], 'SIGTERM');
+  assert.deepEqual(f.children[1].calls.map(x => x.method), ['initialize', 'initialized', 'account/logout', 'account/read']);
+  assert.equal(f.spawned.options.env.CODEX_HOME, HOME);
+});
+
+test('managed macOS environment retains keychain user context and excludes code injection variables', () => {
+  const env = managedCodexEnv(HOME, {HOME:'/Users/test', TMPDIR:'/var/folders/test/', PATH:'/usr/bin:/bin', LANG:'en_US.UTF-8',
+    DYLD_INSERT_LIBRARIES:'/tmp/attack.dylib', DYLD_LIBRARY_PATH:'/tmp', NODE_OPTIONS:'--require malicious', OPENAI_API_KEY:'secret',
+    CODEX_HOME:'/Users/test/.codex', HTTPS_PROXY:'http://localhost:8080'});
+  assert.deepEqual(env, {HOME:'/Users/test', TMPDIR:'/var/folders/test/', PATH:'/usr/bin:/bin', LANG:'en_US.UTF-8',
+    HTTPS_PROXY:'http://localhost:8080', CODEX_HOME:HOME, CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED:'1', RUST_LOG:'off'});
 });

@@ -1,4 +1,4 @@
-OpenAI Codex CLI 0.134.0 (Windows x64)
+OpenAI Codex CLI 0.134.0 (Windows x64, macOS Apple silicon and Intel)
 
 This application downloads the unmodified official native CLI only after the
 user requests connection. It is cached separately from the application. It is
@@ -17,6 +17,39 @@ Official executable: codex-x86_64-pc-windows-msvc.exe
 GitHub release asset ID: 430436520
 Size: 240159536 bytes
 SHA256: 1766ac7dfbf4c7ddb26380e55f52c6c83847a9724294d88902ea3c5650fec134
+
+Official macOS Apple silicon archive: codex-aarch64-apple-darwin.tar.gz
+GitHub release asset ID: 430436479
+Size: 79829356 bytes
+SHA256: 78ad482ccaeb0eb8983b340f33a1f28c8ad315b6d5e3140c34c7e119c826bc12
+
+Its sole regular-file member: codex-aarch64-apple-darwin
+Size: 196035072 bytes
+SHA256: 9c412eba7f46728e971eb8c25cf44b37b918b470848f509474eb91f8ff19b98f
+Verified Mach-O CPU: arm64; LC_BUILD_VERSION minimum macOS: 11.0.0
+
+Official macOS Intel archive: codex-x86_64-apple-darwin.tar.gz
+GitHub release asset ID: 430436440
+Size: 90036798 bytes
+SHA256: 265f8f6d627ba9c6ed1cac7f36e5d19eff60ef345332924f95af2cb6a0c8bbb7
+
+Its sole regular-file member: codex-x86_64-apple-darwin
+Size: 222246000 bytes
+SHA256: 4adcc6b0af2bb55ada2e9d8d7ab8e019e3ae134db29c0761d40c7ba3c5f380b0
+Verified Mach-O CPU: x86_64; LC_VERSION_MIN_MACOSX minimum macOS: 10.12.0
+
+Both macOS archives were downloaded and their compressed hashes matched the
+official release metadata. Their single ustar members, expanded sizes, SHA256,
+native CPU types and minimum OS load commands were independently inspected.
+
+The application requires macOS 13 or later because of its Electron runtime.
+macOS credentials use the official apple-native keyring backend, with no
+plaintext fallback. Codex derives the keychain account name from the SHA256 of
+canonical CODEX_HOME (cli| followed by the first 16 hex digits), under service
+"Codex Auth". GPT Orb uses its own CODEX_HOME, not the user's normal CLI home.
+Pinned implementation references:
+https://github.com/openai/codex/blob/rust-v0.134.0/codex-rs/keyring-store/Cargo.toml
+https://github.com/openai/codex/blob/rust-v0.134.0/codex-rs/login/src/auth/storage.rs
 
 Upstream LICENSE and NOTICE are reproduced alongside this file. The source
 repository contains dependencies and their licensing metadata. GPT Orb does

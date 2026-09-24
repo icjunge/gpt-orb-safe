@@ -10,6 +10,7 @@ const { spawnSync } = require('node:child_process');
 const { releaseContext, githubClient, tagCommit } = require('../scripts/release-github.cjs');
 const { prepareRelease } = require('../scripts/prepare-release.cjs');
 const { verifiedAssets, checkRemoteAssets, publishRelease } = require('../scripts/publish-release.cjs');
+const { signMacReleases } = require('../scripts/sign-mac-release.cjs');
 
 const SHA = 'a'.repeat(40), OTHER = 'b'.repeat(40), REPO = 'icjunge/gpt-orb-safe';
 const context = { repository: REPO, version: '2.5.0', tag: 'v2.5.0', sha: SHA, root: `/repos/${REPO}` };
@@ -176,7 +177,7 @@ test('publication rechecks the tag and latest release after upload', async () =>
   }
 });
 
-test('publication verifier accepts the existing signed-update format and rejects metadata tampering', async t => {
+test('publication verifier preserves Windows format and binds both macOS disk images before upload', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'orb-publish-test-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   fs.mkdirSync(path.join(directory, 'scripts')); fs.mkdirSync(path.join(directory, 'dist'));
@@ -192,9 +193,22 @@ test('publication verifier accepts the existing signed-update format and rejects
     GITHUB_REPOSITORY: REPO, GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v2.5.0' };
   const result = spawnSync(process.execPath, ['scripts/sign-release.cjs', 'dist'], { cwd: directory, env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal((await verifiedAssets(dist, context, config)).length, 6);
+  const dmg = Buffer.alloc(1024 * 1024); dmg.write('koly', dmg.length - 512); dmg.writeUInt32BE(512, dmg.length - 504);
+  for (const arch of ['arm64', 'x64']) fs.writeFileSync(path.join(dist, `GPT-Orb-Setup-${context.version}-${arch}.dmg`), dmg);
+  await signMacReleases({ directory: dist, version: context.version, config, privateKey: env.ORB_UPDATE_PRIVATE_KEY, env });
+  assert.equal((await verifiedAssets(dist, context, config)).length, 12);
+  const yaml = fs.readFileSync(path.join(dist, 'latest.yml'));
   fs.appendFileSync(path.join(dist, 'latest.yml'), 'unexpected: true\n');
   await assert.rejects(verifiedAssets(dist, context, config), /metadata differs/);
+  fs.writeFileSync(path.join(dist, 'latest.yml'), yaml);
+  const checksumPath = path.join(dist, `GPT-Orb-Setup-${context.version}-arm64.dmg.sha256`);
+  const checksum = fs.readFileSync(checksumPath);
+  fs.writeFileSync(checksumPath, '0'.repeat(64) + '  changed.dmg\n');
+  await assert.rejects(verifiedAssets(dist, context, config), /macOS checksum metadata differs/);
+  fs.writeFileSync(checksumPath, checksum);
+  const x64Manifest = path.join(dist, 'orb-update-mac-x64.json');
+  fs.copyFileSync(path.join(dist, 'orb-update-mac-arm64.json'), x64Manifest);
+  await assert.rejects(verifiedAssets(dist, context, config));
 });
 
 test('workflow boundaries keep approval and signing isolated from tag preparation', () => {
@@ -207,9 +221,13 @@ test('workflow boundaries keep approval and signing isolated from tag preparatio
   assert.match(release, /group: publish-stable-release/);
   assert.match(release, /startsWith\(github.ref, 'refs\/tags\/v'\)/);
   assert.equal((release.match(/ORB_UPDATE_PRIVATE_KEY:/g) || []).length, 1);
-  for (const workflow of [prepare, release]) {
-    assert.equal((workflow.match(/uses: actions\/checkout@/g) || []).length, 2);
-    assert.equal((workflow.match(/ref: \$\{\{ github.sha \}\}/g) || []).length, 2);
+  assert.match(release, /needs: \[build, build-mac\]/);
+  assert.match(release, /pattern: release-assets-\*/);
+  assert.match(release, /merge-multiple: true/);
+  assert.match(release, /node scripts\/sign-mac-release\.cjs dist/);
+  for (const [workflow, jobs] of [[prepare, 2], [release, 3]]) {
+    assert.equal((workflow.match(/uses: actions\/checkout@/g) || []).length, jobs);
+    assert.equal((workflow.match(/ref: \$\{\{ github.sha \}\}/g) || []).length, jobs);
     assert.doesNotMatch(workflow, /pull_request_target|secrets: inherit|persist-credentials: true/);
   }
 });

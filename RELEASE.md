@@ -1,12 +1,12 @@
 # 维护与发布 · 2.6.0
 
-本项目的更新路径为：main 提交新版本 → 只读验证与测试 → 自动创建精确提交的稳定版本标签并启动构建 → release 环境审批 → 签名并核对上传资产 → 正式发布 → 客户端验证并下载 → 用户点击「重启并更新」。已有 2.4.1 安装版沿用原公钥接收更新，不必重新安装测试包。
+发布路径为：main 提交新版本 → 验证与测试 → 自动创建精确提交的稳定版本标签 → Windows、Mac arm64 / x64 构建 → release 环境审批 → 签名并核对上传资产 → 正式发布。Windows 沿用原公钥和「重启并更新」；Mac 首版验证对应架构的更新描述后提供 DMG 下载，由用户退出并替换应用。
 
 下列 `OWNER/REPOSITORY` 是占位参数，必须替换为实际来源。先检查 `update-config.json`：`repository`、`publicKey` 均为 `null` 表示更新源未启用。首次交付可自动更新的安装版前，必须完成来源和公钥配置；不能先交付停用版本，再期待它自行发现公钥。
 
 ## 一次性本地初始化
 
-当前仓库为 <https://github.com/icjunge/gpt-orb-safe>。仓库已公开，日常测试与 Windows 安装包构建由 GitHub Actions 执行。此仓库已有发布源和签名公钥时，应沿用现有配置及私钥；下面的初始化只适用于尚未完成设置的仓库。
+当前仓库为 <https://github.com/icjunge/gpt-orb-safe>。仓库已公开，日常测试与 Windows / Mac 安装包构建由 GitHub Actions 执行。此仓库已有发布源和签名公钥时，应沿用现有配置及私钥；下面的初始化只适用于尚未完成设置的仓库。
 
 维护者在自己的电脑安装 Node.js 22.12+、Git 和 [GitHub CLI](https://cli.github.com/)，然后在终端运行：
 
@@ -29,7 +29,7 @@ npm run release:setup -- icjunge/gpt-orb-safe
 
 脚本通过公开 API 核验指定审核人和 `v*` 标签限制；它不能配置或核验管理员绕过保护的界面开关。可在 Settings → Environments → release 中取消允许管理员绕过保护。仓库管理员始终能够修改这些设置，发布保护不能防御已被控制的管理员账号。
 
-妥善备份脚本提示位置中的私钥，**不要将它发到聊天、issue 或仓库**。之后发布新版本继续使用同一密钥，不必每次初始化。普通使用者只需正式发布的 x64 EXE，点击连接后通过官方浏览器登录；无需 Node.js、Git、GitHub CLI 或终端命令。分享正式 Release 链接或安装包，不分享维护者的用户目录、登录状态、配对码和私钥。
+妥善备份脚本提示位置中的私钥，**不要将它发到聊天、issue 或仓库**。之后发布新版本继续使用同一密钥，不必每次初始化。普通使用者只需正式发布的 Windows x64 EXE 或对应芯片的 Mac DMG，点击连接后通过官方浏览器登录；无需 Node.js、Git、GitHub CLI 或终端命令。分享正式 Release 链接或安装包，不分享维护者的用户目录、登录状态、配对码和私钥。
 
 Windows 初始化仅使用用户目录下的默认密钥位置，不接受 `--key-file` 自定义路径或 UNC 形式的网络路径。它依赖 Windows 用户目录现有的访问权限，不会把 POSIX 的 `0600` 当作 Windows ACL 保证；请使用本机用户目录，不要使用映射网络盘，也不要将该目录共享或改成其他用户可读。Linux / macOS 可用仓库外的 `--key-file` 绝对路径，已有密钥须仅当前用户有访问权限。
 
@@ -90,10 +90,10 @@ gh secret set ORB_UPDATE_PRIVATE_KEY --repo OWNER/REPOSITORY --env release < /se
 ## 4. 发行一个新版本
 
 1. 更新 `package.json` 与 `package-lock.json` 的版本（例如 `npm version 2.6.0 --no-git-tag-version`），同时将 `extension/manifest.json` 的 `version` 改为完全相同的 `X.Y.Z`（各段不带前导零且不超过 65535）。更新说明文档。
-2. 执行 `npm test` 和 `node scripts/validate-release.cjs`。需要预览 Windows 安装包时，在 Windows 构建环境执行 `npm run build:win`；安装包位于 `dist/GPT-Orb-Setup-X.Y.Z-x64.exe`。此步骤只是构建，不上传发布。
-3. 将新版本提交并推送到 `main`；`package.json` 的变更触发 `prepare-release.yml`。验证与测试通过后，准备作业创建指向该事件提交的 `vX.Y.Z` 标签，并显式启动对应标签的 Windows release 工作流。GitHub 自带令牌创建的标签不会自动触发另一个 push 工作流，因此这里使用受支持的 `workflow_dispatch`。
-4. 在 GitHub Actions 查看 `Windows release` 的 Windows 构建结果及变更。构建完成后，在 `release` 环境的待审批部署中点 **Review deployments → Approve and deploy**。审批是签名与公开发布的最后一步；保护规则和原私钥保持不变。
-5. 批准后，工作流签名实际安装器，核对上传资产的摘要，正式发布为最新稳定版。现有安装版可在「设置 → 版本与更新」检查并下载，然后点击「重启并更新」。未批准、构建失败或只有草稿时，客户端不会获得新版。
+2. 执行 `npm test` 和 `node scripts/validate-release.cjs`。Windows 构建执行 `npm run build:win`，生成 `dist/GPT-Orb-Setup-X.Y.Z-x64.exe`。Mac 构建执行 `npm run build:mac:arm64` 或 `npm run build:mac:x64`，生成对应 `.dmg`；`npm run build:mac` 构建两个架构。Mac 最低系统为 macOS 13，DMG 中应用必须使用各自原生架构。上述步骤只构建，不上传发布。
+3. 将新版本提交并推送到 `main`；`package.json` 的变更触发 `prepare-release.yml`。验证与测试通过后，准备作业创建指向该事件提交的 `vX.Y.Z` 标签，并显式启动对应标签的 Desktop release 工作流。GitHub 自带令牌创建的标签不会自动触发另一个 push 工作流，因此这里使用受支持的 `workflow_dispatch`。
+4. 在 GitHub Actions 查看 `Desktop release` 的 Windows、Mac arm64 和 Mac x64 构建与原生验证结果。全部构建完成后，在 `release` 环境的待审批部署中点 **Review deployments → Approve and deploy**。审批是签名与公开发布的最后一步；保护规则和原私钥保持不变。
+5. 批准后，工作流针对实际 EXE 与两份 DMG 生成 Ed25519 签名更新描述，核对上传资产的摘要，正式发布为最新稳定版。Windows 可在「设置 → 版本与更新」检查并下载，点击「重启并更新」；Mac 点击「下载 Mac 新版」，下载后退出并替换「应用程序」中的旧版。未批准、构建失败或只有草稿时，客户端不会获得新版。
 
 手动推送匹配版本的 `vX.Y.Z` 标签、或在已有标签上手动启动 release 工作流的入口仍保留。默认分支不能直接进入带签名密钥的发布作业。准备作业拒绝同名标签指向不同提交，不改写标签，不覆盖同版本发行资产。若准备流程失败，请检查日志；不要重复创建不同 SHA 的同名标签。若准备时 main 已前进，流程会安全跳过；在最新 main 上手动运行 Actions → Prepare signed update → Run workflow 即可重试，无需本地安装测试包。
 
@@ -101,20 +101,23 @@ gh secret set ORB_UPDATE_PRIVATE_KEY --repo OWNER/REPOSITORY --env release < /se
 
 ## 5. 资产与签名格式
 
-每个正式 Release 至少保留以下同一构建的文件：
+每个正式 Release 保留以下同一提交的 12 份资产（Mac 的 `{arch}` 分别为 `arm64` 与 `x64`）：
 
 | 文件 | 用途 |
 |---|---|
 | `GPT-Orb-Setup-X.Y.Z-x64.exe` | Windows x64 NSIS 安装器，包含桌面应用、运行依赖、Electron 和扩展 |
-| `orb-update.json` | Ed25519 签名的发布描述，客户端首先验证它 |
+| `orb-update.json` | Windows 的 Ed25519 签名更新描述 |
+| `GPT-Orb-Setup-X.Y.Z-{arch}.dmg` | 两份 Mac 安装镜像，应用仅作 ad-hoc 签名 |
+| `orb-update-mac-{arch}.json` | 两份 Mac 的 Ed25519 签名更新描述，客户端只接受当前架构 |
+| `GPT-Orb-Setup-X.Y.Z-{arch}.dmg.sha256` | 两份 DMG 的 SHA-256，供手动核对 |
 | `latest.yml` | electron-updater 下载描述，其版本、文件、长度与哈希必须与签名一致 |
 | `GPT-Orb-Setup-X.Y.Z-x64.exe.sha256` | 初次手动下载时可核对的哈希；它本身不是发布者证书 |
 | `GPT-Orb-X.Y.Z-Source.zip` | 源码、lockfile、测试、文档和发布流程 |
 | `GPT-Orb-X.Y.Z-Browser-Extension.zip` | 单独的本地浏览器扩展文件及说明 |
 
-`orb-update.json` 是 `{payload, signature}` 信封；二者均为 Base64，签名覆盖 payload 的原始 UTF-8 JSON 字节。payload 含 `schema`、`version`、`tag`、`platform`、`arch`、`file`、`size`、`sha256`、`sha512`、`publishedAt`。客户端不信任单独的 `latest.yml`，也不在 UI 中执行发布内容。
+Windows 与 Mac 的更新描述均为 `{payload, signature}` 信封；二者均为 Base64，签名覆盖 payload 的原始 UTF-8 JSON 字节。payload 含 `schema`、`version`、`tag`、`platform`、`arch`、`file`、`size`、`sha256`、`sha512`、`publishedAt`。Windows 客户端不信任单独的 `latest.yml`；Mac 不使用该文件或 Squirrel.Mac。所有客户端均不在 UI 中执行发布内容。Mac 验签只覆盖描述，浏览器下载到磁盘的 DMG 不经过应用校验，不能将其写成「完整包已验证」或自动安装。
 
-如需在受控维护环境手动签名，先将 `ORB_UPDATE_PRIVATE_KEY` 安全加载到该进程环境，再运行 `node scripts/sign-release.cjs dist`。脚本验证实际 EXE、固定公钥、仓库环境与标签（存在时），生成上述更新描述和哈希；不要在命令历史中直接粘贴密钥。
+如需在受控维护环境手动签名，先将 `ORB_UPDATE_PRIVATE_KEY` 安全加载到该进程环境，再运行 `node scripts/sign-release.cjs dist` 和 `node scripts/sign-mac-release.cjs dist`。脚本验证实际 EXE / DMG、固定公钥、仓库环境与标签（存在时），生成上述更新描述和哈希；不要在命令历史中直接粘贴密钥。
 
 生成源码与扩展 ZIP 的命令：
 
@@ -124,15 +127,17 @@ python scripts/package_windows.py --source-only --extension-zip --output dist
 
 2.1+ 不再用此 Python 脚本构建便携 Windows 包；安装版使用 electron-builder。所有构建依赖均通过 lockfile 固定，但首次下载依赖仍需要可用网络。
 
+Mac 当前没有 Apple Developer ID 证书或公证；构建时只作 ad-hoc 签名并保留 hardened runtime。Ed25519 发布描述不替代 Apple 的开发者身份验证。首次安装用户须按 [Apple 官方说明](https://support.apple.com/102445) 处理未识别开发者提示，不提供移除隔离属性、关闭 Gatekeeper 或跳过恶意软件警告的命令。后续如需减少安装阻碍或支持系统级自动替换，应单独接入维护者自己的 Developer ID 签名与 Apple 公证，通过正式 Secret 配置；证书、私钥与 Apple 凭据都不应提交仓库或发送到聊天。当前流程不要求这些凭据。
+
 ## 6. 客户端与恢复边界
 
-新版在桌面主进程提供一键连接：新用户主动点击后下载约 85 MB 的固定 OpenAI 官方组件 `0.134.0`，校验压缩包与可执行文件的长度及 SHA-256，缓存复用；由官方组件发起浏览器登录，成功后自动开启每 5 分钟读取。普通用户无需 Node.js、Git 或 npm；安装包不携带任何账号状态，也不全局安装 CLI。源码开发仍需 `npm ci` 后 `npm start`，不要跳过 Electron 的安装脚本。扩展 ZIP 或 `npm run extension:update` 不会更新桌面或加入一键连接。
+新版在桌面主进程提供一键连接：新用户主动点击后下载约 80–90 MB 的固定 OpenAI 官方组件 `0.134.0`，校验压缩包与可执行文件的长度及 SHA-256，缓存复用；由官方组件发起浏览器登录，成功后自动开启每 5 分钟读取。普通用户无需 Node.js、Git 或 npm；安装包不携带任何账号状态，也不全局安装 CLI。源码开发仍需 `npm ci` 后 `npm start`，不要跳过 Electron 的安装脚本。扩展 ZIP 或 `npm run extension:update` 不会更新桌面或加入一键连接。
 
-自动配置使用应用独立的 `CODEX_HOME` 和仅系统凭据库的存储策略；凭据库不可用应连接失败，不能静默改用文件。已有用户迁移继续使用其 CLI 与已保存刷新偏好，手动切换连接方式后停止刷新并清空当前读数，不覆盖原 CLI 登录。正常 Codex 登录并非“用量只读 OAuth”；应用通过固定 RPC 限制自身行为，不发起模型任务或重置额度。
+自动配置使用应用独立的 `CODEX_HOME` 和仅系统凭据库的存储策略（Windows 凭据库 / macOS 钥匙串）；凭据库不可用应连接失败，不能静默改用文件。已有用户迁移继续使用其 CLI 与已保存刷新偏好，手动切换连接方式后停止刷新并清空当前读数，不覆盖原 CLI 登录。正常 Codex 登录并非“用量只读 OAuth”；应用通过固定 RPC 限制自身行为，不发起模型任务或重置额度。
 
-发布验收须覆盖：无 Node/Git/npm/Codex 的 Windows x64 新用户安装；首次点击才准备组件；下载进度、校验失败、取消和缓存复用；官方浏览器登录成功 / 失败 / 超时 / 取消；系统凭据库不可用时拒绝保存；关闭浏览器后按间隔刷新；重启保留启用状态；暂停保留登录；退出仅清除此工具登录且不串账号；组件缺失 / 损坏和过期登录可重连；旧用户连接方式及已有 CLI 登录不受覆盖；未知 Token 隐藏；签名自更新保留设置与独立登录。模拟 RPC、离屏界面或构建成功不能代替真实账号与干净 Windows 验收，记录实际完成范围。
+发布验收须覆盖：无 Node/Git/npm/Codex 的 Windows x64 与 Mac arm64 / x64 新用户安装；首次点击才准备组件；下载进度、校验失败、取消和缓存复用；官方浏览器登录成功 / 失败 / 超时 / 取消；系统凭据库不可用时拒绝保存；关闭浏览器后按间隔刷新；重启保留启用状态；暂停保留登录；退出仅清除此工具登录且不串账号；组件缺失 / 损坏和过期登录可重连；旧用户连接方式及已有 CLI 登录不受覆盖；未知 Token 隐藏；Windows 签名自更新及 Mac 手动替换保留设置与独立登录；Mac 菜单栏、快捷键、玻璃材质、登录项失败提示，以及首装 Gatekeeper 行为。模拟 RPC、离屏界面或构建成功不能代替真实账号与干净 Windows / Mac 验收，记录实际完成范围。
 
-固定官方组件版本、下载资源、压缩包和 EXE 的字节长度及哈希位于 `src/codex-runtime.cjs`。升级组件时审核对应官方源代码、登录协议与许可，同步离线及 Windows 验证；不能只把固定哈希改为远程最新值。安装包中的组件下载器不读取签名私钥，原 `release` 审批和应用更新公钥保持不变。
+固定官方组件版本、下载资源、压缩包和对应原生可执行文件的字节长度及哈希位于 `src/codex-runtime.cjs`。升级组件时审核对应官方源代码、登录协议与许可，同步离线及 Windows / Mac 两种架构的验证；不能只把固定哈希改为远程最新值。安装包中的组件下载器不读取签名私钥，原 `release` 审批和应用更新公钥保持不变。
 
 额度字段仍只按服务端实际返回解析；不能把最新日桶称为“本机今日 Token”，也不能宣称所有账号、所有旧 CLI 版本都兼容。官方 App Server 接口有变动风险，出现未知字段不编造数据或自动扩大权限。
 
@@ -142,8 +147,8 @@ python scripts/package_windows.py --source-only --extension-zip --output dist
 
 维护者调试扩展时，可在 Windows 仓库目录运行 `npm run extension:update`，无需 `npm ci`。它只把本地 `extension` 同步到当前用户默认的 `%APPDATA%\GPT Usage Orb Safe\Browser-Extension`，使用与桌面一致的清单校验、完整替换和防降级策略；不读取浏览器配置，不启动桌面，不自动重载。该源码路径不经过安装包签名验证，普通用户仍使用正式签名更新。浏览器若加载了其他目录，必须先迁移到打印出的固定目录一次；之后在扩展管理页重载并重新配对即可。这个命令既不发布 Release，也不改变安装的桌面版本。
 
-应用名与用户数据目录保持为 `GPT Usage Orb Safe`。从旧便携版迁移到 NSIS 需要一次安装；后续由应用验证、下载，用户点击后重启更新。安装器按当前用户安装，不要求应用用户提供 GitHub 或 GPT 凭据。
+应用名与用户数据目录保持为 `GPT Usage Orb Safe`。Windows 从旧便携版迁移到 NSIS 需要一次安装，之后由应用验证、下载，用户点击后重启更新。Mac 从 DMG 拖到「应用程序」安装，更新时退出并替换 `.app`；用户数据留在 `~/Library/Application Support/GPT Usage Orb Safe`，不随应用替换删除。下载安装不要求用户提供 GitHub 或 GPT 凭据；连接 Codex 才在官方页面登录。
 
 扩展每次由桌面安装包同步到用户数据目录的 `Browser-Extension`。旧目录首次迁移需在浏览器移除并加载固定目录一次；之后点击扩展内「重新加载扩展」即可读取新版文件。重载会清除会话配对，必须重新复制桌面配对码。
 
-更新安装前在 `recovery` 保留偏好设置备份；不备份账号凭据，也不提供 NSIS 原子回滚。安装失败可能需要重新运行可信安装器；手动恢复偏好时先退出程序，再将选择的 JSON 备份复制为用户数据目录的 `preferences.json`。请勿在说明中将模拟更新测试写成实体 Windows 升级通过，或把 Ed25519 更新签名写成 Windows Authenticode 签名。
+Windows 更新安装前在 `recovery` 保留偏好设置备份；不备份账号凭据，也不提供 NSIS 原子回滚。安装失败可能需要重新运行可信安装器；手动恢复偏好时先退出程序，再将选择的 JSON 备份复制为用户数据目录的 `preferences.json`。请勿在说明中将模拟更新测试写成实体 Windows 升级通过，或把 Ed25519 更新签名写成 Windows Authenticode 签名 / Apple 公证。Mac 手动替换不提供自动备份或程序回滚。

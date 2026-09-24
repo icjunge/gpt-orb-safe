@@ -212,11 +212,14 @@ function connection({executable, cwd, codexHome, spawnImpl, onNotification, base
   };
 }
 
-function validateOptions({executable, codexHome, cwd}) {
+function validateOptions({executable, codexHome, cwd, platform}) {
   for (const value of [executable, codexHome, cwd]) if (typeof value !== 'string' || !path.isAbsolute(value) || /[\u0000-\u001f]/.test(value)) throw new CodexAuthError('not-found');
-  if (!/\.exe$/i.test(executable)) throw new CodexAuthError('not-found');
+  if (platform !== 'win32' && platform !== 'darwin') throw new CodexAuthError('unsupported');
+  if (platform === 'win32' ? !/\.exe$/i.test(executable) : path.basename(executable) !== 'codex') throw new CodexAuthError('not-found');
   // Root owns directory creation and integrity verification. Never discover PATH
-  // shims or silently fall back to the user's existing Codex home here.
+  // shims or silently fall back to the user's existing Codex home here. macOS
+  // accepts only the managed cache's extensionless native binary name; its
+  // reviewed Mach-O bytes are verified by codex-runtime before every spawn.
   return path.resolve(codexHome).toLowerCase();
 }
 function accountConnected(value) {
@@ -240,8 +243,8 @@ async function initialize(channel, timeoutMs = 10000) {
   channel.initialized();
 }
 
-async function loginManagedCodex({executable, codexHome, cwd, signal, openExternal, onStatus, spawnImpl = spawn, timeoutMs = 180000, checkPort = checkLoginPort, baseEnv = process.env} = {}) {
-  const key = validateOptions({executable, codexHome, cwd});
+async function loginManagedCodex({executable, codexHome, cwd, signal, openExternal, onStatus, spawnImpl = spawn, timeoutMs = 180000, checkPort = checkLoginPort, baseEnv = process.env, platform = process.platform} = {}) {
+  const key = validateOptions({executable, codexHome, cwd, platform});
   if (typeof openExternal !== 'function') throw new CodexAuthError('browser-failed');
   if (signal?.aborted) throw new CodexAuthError('cancelled');
   if (activeHomes.has(key)) throw new CodexAuthError('login-busy');
@@ -374,8 +377,8 @@ async function loginManagedCodex({executable, codexHome, cwd, signal, openExtern
   }
 }
 
-async function logoutManagedCodex({executable, codexHome, cwd, signal, onStatus, spawnImpl = spawn, baseEnv = process.env} = {}) {
-  const key = validateOptions({executable, codexHome, cwd});
+async function logoutManagedCodex({executable, codexHome, cwd, signal, onStatus, spawnImpl = spawn, baseEnv = process.env, platform = process.platform} = {}) {
+  const key = validateOptions({executable, codexHome, cwd, platform});
   if (signal?.aborted) throw new CodexAuthError('cancelled');
   if (activeHomes.has(key)) throw new CodexAuthError('login-busy');
   activeHomes.add(key);

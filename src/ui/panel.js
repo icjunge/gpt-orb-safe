@@ -194,7 +194,11 @@
     }
     renderSetupProgress('codex-setup-progress', 'component-progress', 'component-progress-value');
     setText('scope-description', native ? '仅代表 Codex 服务统计，非全部 ChatGPT Token。「最近一日」采用服务端日期，并非本机今日。读取时间不代表统计更新时间。' : '仅显示官方页面已提供的指标，非全部 ChatGPT Token。读取时间不代表统计更新时间。');
-    setText('settings-source-note', native ? managed ? '暂停仅停止刷新。退出账号只清除此工具的登录。Ctrl + Alt + G 展开或收起面板。' : '停止刷新不会退出 Codex 账号。切换来源后需重新开启。Ctrl + Alt + G 展开或收起面板。' : '配对仅同步数值，不授予账号操作权限。退出后需重新配对。Ctrl + Alt + G 展开或收起面板。');
+    const mac = state.platform === 'darwin';
+    const shortcut = mac ? '⌘ + ⌥ + G' : 'Ctrl + Alt + G';
+    setText('settings-source-note', `${native ? managed ? '暂停仅停止刷新。退出账号只清除此工具的登录。' : '停止刷新不会退出 Codex 账号。切换来源后需重新开启。' : '配对仅同步数值，不授予账号操作权限。退出后需重新配对。'}${shortcut} 展开或收起面板。`);
+    setText('manual-codex-description', mac ? '使用已有 Codex 时，可在终端安装并登录同一个 ChatGPT 账号。' : '使用已有 Codex 时，可在 PowerShell 安装并登录同一个 ChatGPT 账号。');
+    setText('manual-codex-command', mac ? 'npm install -g @openai/codex && codex login' : 'npm.cmd install -g @openai/codex\nif ($LASTEXITCODE -eq 0) { codex.cmd login }');
   }
   function setupMessage() {
     if (typeof state.codexSetup?.message === 'string' && state.codexSetup.message) return state.codexSetup.message;
@@ -254,10 +258,12 @@
     const status = updates.status || 'unconfigured';
     const currentVersion = typeof updates.currentVersion === 'string' ? updates.currentVersion : '2.6.0';
     const availableVersion = typeof updates.availableVersion === 'string' ? updates.availableVersion : '';
+    const manual = updates.installMode === 'manual';
     const messages = {
       unconfigured: '更新源尚未启用',
       idle: '可检查是否有新版本',
       checking: '正在检查新版本…',
+      available: '有可用更新，可在浏览器中下载 Mac 新版',
       downloading: '正在下载更新，完成后可重启安装',
       ready: '更新已准备好，重启后生效',
       error: '更新未完成，请稍后重试'
@@ -268,7 +274,7 @@
     hidden('available-version', !availableVersion);
     setText('update-status', status === 'unconfigured' ? messages.unconfigured : typeof updates.message === 'string' && updates.message ? updates.message : messages[status] || messages.idle);
     $('update-status').classList.toggle('error', status === 'error');
-    const downloading = status === 'downloading';
+    const downloading = !manual && status === 'downloading';
     hidden('update-progress-row', !downloading);
     if (finite(updates.progress)) {
       const progress = Math.max(0, Math.min(100, updates.progress));
@@ -283,7 +289,8 @@
     setText('update-last-checked', finite(checkedAt) ? `上次检查 ${new Date(checkedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}` : '');
     $('check-updates-button').disabled = ['unconfigured', 'checking', 'downloading', 'ready'].includes(status);
     setText('check-updates-button', status === 'checking' ? '正在检查…' : status === 'downloading' ? '正在下载…' : '检查更新');
-    hidden('install-update-button', status !== 'ready');
+    hidden('install-update-button', manual ? status !== 'available' : status !== 'ready');
+    setText('install-update-button', manual ? '下载 Mac 新版 ↗' : '重启并更新 ↗');
     hidden('release-page-button', typeof updates.repository !== 'string' || !updates.repository);
     $('auto-check-updates').checked = state.settings?.autoCheckUpdates !== false;
     const extension = state.extension || {};
@@ -316,7 +323,7 @@
     const backdropStatus = appearance.backdropStatus || (appearance.nativeBackdrop === true ? 'requested' : 'unavailable');
     $('glass-tint').disabled = backdropStatus !== 'requested' || appearance.nativeBackdrop !== true || appearance.reducedTransparency === true || appearance.highContrast === true;
     const messages = {
-      requested: '已请求系统毛玻璃；实际效果由 Windows 透明效果设置决定。',
+      requested: state.platform === 'darwin' ? '已请求 macOS 系统毛玻璃；实际效果由系统透明度设置决定。' : '已请求系统毛玻璃；实际效果由 Windows 透明效果设置决定。',
       unsupported: '此系统不支持原生毛玻璃，使用清晰背景。',
       'reduced-transparency': '系统已关闭透明效果，使用清晰背景。',
       unavailable: '系统毛玻璃未启用，使用清晰背景。'
@@ -543,7 +550,8 @@
   });
   $('install-update-button').addEventListener('click', async () => {
     $('install-update-button').disabled = true;
-    if (!(await action('installUpdate')).ok) $('install-update-button').disabled = false;
+    const result = await action('installUpdate');
+    if (!result.ok || state.updates?.installMode === 'manual') $('install-update-button').disabled = false;
   });
   $('release-page-button').addEventListener('click', () => action('openReleasePage'));
   $('recovery-folder-button').addEventListener('click', () => action('openRecoveryFolder'));

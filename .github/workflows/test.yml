@@ -66,3 +66,51 @@ jobs:
           path: |
             dist/GPT-Orb-Setup-*-x64.exe
             dist/GPT-Orb-*-Source.zip
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+            app: dist/mac-arm64/GPT Usage Orb Safe.app
+          - os: macos-15-intel
+            arch: x64
+            app: dist/mac/GPT Usage Orb Safe.app
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Build the macOS disk image for this runner architecture
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # This job has no signing secrets or protected environment. Explicit
+          # mac.identity='-' creates only an ad-hoc signature, including on PRs.
+          CSC_FOR_PULL_REQUEST: 'true'
+      - name: Verify native app startup and isolated Codex component
+        timeout-minutes: 10
+        run: node test/mac-native-smoke.cjs --app "${{ matrix.app }}"
+      - name: Keep native macOS diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-native-diagnostic-${{ matrix.arch }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: dist/mac-native-diagnostic-${{ matrix.arch }}/
+      - name: Keep the tested macOS disk image for manual review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-review-build-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: dist/GPT-Orb-Setup-*-${{ matrix.arch }}.dmg

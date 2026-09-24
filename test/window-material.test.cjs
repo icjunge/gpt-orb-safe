@@ -15,8 +15,39 @@ test('unsupported platforms never invoke native window APIs, while accessibility
   const win={isDestroyed:()=>false,setBackgroundMaterial(){assert.fail('unsupported native call');}};
   const result=applyPanelMaterial(win,{platform:'linux',release:'6.8.0',theme:{prefersReducedTransparency:true}});
   assert.deepEqual(result,{nativeBackdrop:false,reducedTransparency:true,highContrast:false,backdropStatus:'reduced-transparency'});
-  assert.deepEqual(applyPanelMaterial(win,{platform:'darwin',release:'24.0.0',theme:{inForcedColorsMode:true}}),
+  assert.deepEqual(applyPanelMaterial(win,{platform:'linux',release:'6.8.0',theme:{inForcedColorsMode:true}}),
     {nativeBackdrop:false,reducedTransparency:true,highContrast:true,backdropStatus:'reduced-transparency'});
+});
+
+test('macOS requests native under-window vibrancy and responds to accessibility changes',()=>{
+  const calls=[];
+  const {win}=host({setVibrancy:value=>calls.push(['vibrancy',value]),setBackgroundColor:value=>calls.push(['color',value]),
+    setBackgroundMaterial(){assert.fail('macOS must never call the DWM API');}});
+  const options={platform:'darwin',release:'25.0.0',theme:{}};
+  assert.deepEqual(applyPanelMaterial(win,options),{
+    nativeBackdrop:true,reducedTransparency:false,highContrast:false,backdropStatus:'requested'});
+  assert.deepEqual(calls,[['vibrancy','under-window'],['color','#00000000']]);
+  for(const theme of [{prefersReducedTransparency:true},{shouldUseHighContrastColors:true},{inForcedColorsMode:true}]){
+    const appearance=applyPanelMaterial(win,{...options,theme});
+    assert.equal(appearance.nativeBackdrop,false);
+    assert.equal(appearance.backdropStatus,'reduced-transparency');
+    assert.deepEqual(calls.slice(-2),[['vibrancy',null],['color','#171b22']]);
+  }
+  assert.equal(applyPanelMaterial(win,options).nativeBackdrop,true);
+  assert.deepEqual(calls.slice(-2),[['vibrancy','under-window'],['color','#00000000']]);
+});
+
+test('unavailable macOS compositor falls back without crashing or claiming visible blur',()=>{
+  for(const failure of ['vibrancy','color']){
+    const calls=[];
+    const {win}=host({setVibrancy(value){calls.push(['vibrancy',value]);if(failure==='vibrancy'&&value)throw Error('unavailable');},
+      setBackgroundColor(value){calls.push(['color',value]);if(failure==='color'&&value==='#00000000')throw Error('unavailable');}});
+    assert.equal(applyPanelMaterial(win,{platform:'darwin'}).nativeBackdrop,false);
+    assert.deepEqual(calls.slice(-2),[['vibrancy',null],['color','#171b22']]);
+  }
+  assert.equal(applyPanelMaterial(null,{platform:'darwin'}).backdropStatus,'unavailable');
+  const destroyed=host({isDestroyed:()=>true,setVibrancy(){assert.fail('destroyed host');}});
+  applyPanelMaterial(destroyed.win,{platform:'darwin'});assert.deepEqual(destroyed.calls,[]);
 });
 
 const supported={platform:'win32',release:'10.0.26100',theme:{}};

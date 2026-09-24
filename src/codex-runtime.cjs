@@ -9,7 +9,8 @@ const {pipeline} = require('node:stream/promises');
 const {createGunzip} = require('node:zlib');
 
 // Reviewed official release metadata, not a remotely replaceable latest manifest.
-// GitHub asset IDs: archive 430436498, executable 430436520 (rust-v0.134.0).
+// GitHub asset IDs and independent archive/executable hashes are documented in
+// assets/licenses/CODEX-SOURCE.txt. Keep this Windows alias for compatibility.
 const PINNED_CODEX_RUNTIME = Object.freeze({
   version:'0.134.0', platform:'win32', arch:'x64',
   url:'https://github.com/openai/codex/releases/download/rust-v0.134.0/codex-x86_64-pc-windows-msvc.exe.tar.gz',
@@ -19,8 +20,32 @@ const PINNED_CODEX_RUNTIME = Object.freeze({
   executableBytes:240159536,
   executableSha256:'1766ac7dfbf4c7ddb26380e55f52c6c83847a9724294d88902ea3c5650fec134'
 });
+const PINNED_CODEX_RUNTIMES = Object.freeze({
+  'win32-x64':PINNED_CODEX_RUNTIME,
+  'darwin-arm64':Object.freeze({
+    version:'0.134.0', platform:'darwin', arch:'arm64',
+    url:'https://github.com/openai/codex/releases/download/rust-v0.134.0/codex-aarch64-apple-darwin.tar.gz',
+    archiveBytes:79829356,
+    archiveSha256:'78ad482ccaeb0eb8983b340f33a1f28c8ad315b6d5e3140c34c7e119c826bc12',
+    member:'codex-aarch64-apple-darwin',
+    executableBytes:196035072,
+    executableSha256:'9c412eba7f46728e971eb8c25cf44b37b918b470848f509474eb91f8ff19b98f'
+  }),
+  'darwin-x64':Object.freeze({
+    version:'0.134.0', platform:'darwin', arch:'x64',
+    url:'https://github.com/openai/codex/releases/download/rust-v0.134.0/codex-x86_64-apple-darwin.tar.gz',
+    archiveBytes:90036798,
+    archiveSha256:'265f8f6d627ba9c6ed1cac7f36e5d19eff60ef345332924f95af2cb6a0c8bbb7',
+    member:'codex-x86_64-apple-darwin',
+    executableBytes:222246000,
+    executableSha256:'4adcc6b0af2bb55ada2e9d8d7ab8e019e3ae134db29c0761d40c7ba3c5f380b0'
+  })
+});
+function getPinnedCodexRuntime(platform = process.platform, arch = process.arch) {
+  return PINNED_CODEX_RUNTIMES[`${platform}-${arch}`] || null;
+}
 const MESSAGES = Object.freeze({
-  unsupported:'一键连接目前支持 Windows 64 位。',
+  unsupported:'一键连接支持 Windows 64 位，以及 Apple 芯片或 Intel 芯片的 Mac。',
   cancelled:'已取消准备连接组件。',
   busy:'连接组件正在准备中。',
   network:'连接组件下载未完成，请检查网络后重试。',
@@ -64,17 +89,21 @@ async function safeDirectory(root, parts, create) {
   }
   return directory;
 }
-async function hashFile(file, size, signal) {
+async function hashFile(file, size, signal, executableMode = false) {
   cancelled(signal);
   const before = await statOrNull(file);
   if (!before) return null;
   if (!plainFile(before)) fail('storage');
   if (before.size !== size) return null;
+  // On macOS a valid hash alone is not enough: a restored non-executable cache
+  // cannot be spawned, and other users must not have write access to the file.
+  if (executableMode && (before.mode & 0o777) !== 0o700) return null;
   const handle = await fsp.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
   let stream;
   try {
     const opened = await handle.stat();
     if (!plainFile(opened) || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== size) fail('storage');
+    if (executableMode && (opened.mode & 0o777) !== 0o700) fail('storage');
     const digest = createHash('sha256');
     let bytes = 0;
     stream = handle.createReadStream({autoClose:false});
@@ -87,6 +116,7 @@ async function hashFile(file, size, signal) {
     const current = await fsp.lstat(file);
     if (!plainFile(current) || current.dev !== before.dev || current.ino !== before.ino || after.size !== size ||
       after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) fail('storage');
+    if (executableMode && (current.mode & 0o777) !== 0o700) fail('storage');
     return bytes === size ? digest.digest('hex') : null;
   } finally { stream?.destroy(); await handle.close(); }
 }
@@ -229,6 +259,7 @@ async function extractExecutable(archive, destination, artifact, signal) {
       await pipeline(fs.createReadStream(archive), createGunzip(), singleFileTar(artifact), verify, sink, {signal});
     } catch (error) { if (signal?.aborted) fail('cancelled'); if (error?.code === 'ENOSPC') fail('storage'); fail('integrity'); }
     if (bytes !== artifact.executableBytes || hash.digest('hex') !== artifact.executableSha256) fail('integrity');
+    if (artifact.platform === 'darwin') await handle.chmod(0o700);
     await handle.sync();
   } finally { sink?.destroy(); await handle.close(); }
 }
@@ -237,15 +268,19 @@ async function extractExecutable(archive, destination, artifact, signal) {
  * The second argument is an immutable fixture seam for tests, never renderer data.
  */
 function createCodexRuntime({userDataDir, request, platform = process.platform, arch = process.arch,
-  timeoutMs = 10 * 60 * 1000, idleTimeoutMs = 45 * 1000} = {}, artifact = PINNED_CODEX_RUNTIME) {
+  timeoutMs = 10 * 60 * 1000, idleTimeoutMs = 45 * 1000} = {}, artifact) {
   if (typeof userDataDir !== 'string' || !path.isAbsolute(userDataDir)) throw new TypeError('Absolute userDataDir required');
-  if (!/^\d+\.\d+\.\d+$/.test(artifact.version) || artifact.platform !== 'win32' || artifact.arch !== 'x64' ||
-      !/^[A-Za-z0-9_.-]+\.exe$/.test(artifact.member) || !/^https:\/\/github\.com\/openai\/codex\/releases\/download\/rust-v[0-9.]+\/[A-Za-z0-9_.-]+\.tar\.gz$/.test(artifact.url) ||
+  // Unsupported hosts can construct a read-only manager, but every operation
+  // below fails before filesystem/network access. There is no cross-arch fallback.
+  artifact = artifact || getPinnedCodexRuntime(platform, arch) || PINNED_CODEX_RUNTIME;
+  const reviewed = getPinnedCodexRuntime(artifact.platform, artifact.arch);
+  if (!/^\d+\.\d+\.\d+$/.test(artifact.version) || !reviewed || artifact.member !== reviewed.member ||
+      artifact.url !== `https://github.com/openai/codex/releases/download/rust-v${artifact.version}/${artifact.member}.tar.gz` ||
       !['archiveSha256', 'executableSha256'].every(key => /^[a-f0-9]{64}$/.test(artifact[key])) ||
       !['archiveBytes', 'executableBytes'].every(key => Number.isSafeInteger(artifact[key]) && artifact[key] > 0 && artifact[key] < 512 * 1024 * 1024)) throw new TypeError('Invalid pinned component');
   artifact = Object.freeze({...artifact});
-  const parts = ['components', 'codex', artifact.version, 'win32-x64'];
-  const filename = 'codex.exe';
+  const parts = ['components', 'codex', artifact.version, `${artifact.platform}-${artifact.arch}`];
+  const filename = artifact.platform === 'win32' ? 'codex.exe' : 'codex';
   let active = false;
   function supported() { if (platform !== artifact.platform || arch !== artifact.arch) fail('unsupported'); }
   async function getVerifiedExecutable({signal} = {}) {
@@ -254,7 +289,7 @@ function createCodexRuntime({userDataDir, request, platform = process.platform, 
       const directory = await safeDirectory(userDataDir, parts, false);
       if (!directory) return null;
       const executable = path.join(directory, filename);
-      return await hashFile(executable, artifact.executableBytes, signal) === artifact.executableSha256 ? executable : null;
+      return await hashFile(executable, artifact.executableBytes, signal, artifact.platform === 'darwin') === artifact.executableSha256 ? executable : null;
     } catch (error) { throw translate(error, signal); }
   }
   async function ensureReady({signal, onProgress} = {}) {
@@ -303,4 +338,4 @@ function createCodexRuntime({userDataDir, request, platform = process.platform, 
   return Object.freeze({version:artifact.version, downloadBytes:artifact.archiveBytes, getVerifiedExecutable, ensureReady});
 }
 
-module.exports = {PINNED_CODEX_RUNTIME, CodexRuntimeError, createCodexRuntime};
+module.exports = {PINNED_CODEX_RUNTIME, PINNED_CODEX_RUNTIMES, getPinnedCodexRuntime, CodexRuntimeError, createCodexRuntime};

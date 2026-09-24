@@ -15,27 +15,30 @@ const settle = async () => { for (let count = 0; count < 8; count += 1) await Pr
 
 // Run the actual main-process controller with isolated in-memory dependencies.
 // No Electron process, executable discovery, account file, network or CLI is used.
-async function launch({preferences, managedLogin, managedStop, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false, workArea={x:0,y:0,width:1920,height:1080}} = {}) {
+async function launch({preferences, managedLogin, managedStop, platform='win32', arch='x64', isPackaged=false, loginStatus, bridgeFails = false, release = '10.0.22631', theme = {}, backdropFails = false, orbBackdropFails = false, workArea={x:0,y:0,width:1920,height:1080}} = {}) {
   const handlers = new Map(), windows = [], providers = [], bridges = [], files = new Map();
-  const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[],componentDownloads:0,componentChecks:0,managedLogins:[],managedLogouts:[]};
+  const calls = {discover:0, quit:0, external:[], openPath:[], clipboard:[], errors:[], login:[], notifications:[],componentDownloads:0,componentChecks:0,managedLogins:[],managedLogouts:[],menus:[],trayPopups:0,dockHides:0,dialogs:[],shortcuts:[],updaters:[]};
   const userData = '/virtual-orb/user-data';
   const preferencesPath = path.join(userData, 'preferences.json');
   if (preferences) files.set(preferencesPath, JSON.stringify(preferences));
+  if(isPackaged){files.set(path.join('/virtual-orb/resources','app-update.yml'),'fixture source marker');
+    files.set(path.resolve(__dirname,'../update-config.json'),JSON.stringify(require('../update-config.json')));}
   const timers = new Map();
   let nextTimer = 1;
   const addTimer = (callback, delay) => { const id = nextTimer++; timers.set(id, {callback, delay}); return id; };
   const app = new EventEmitter();
   const nativeTheme=Object.assign(new EventEmitter(),{prefersReducedTransparency:false,shouldUseHighContrastColors:false},theme);
   Object.assign(app, {
-    isPackaged:false,
+    isPackaged,
     setName(){}, setAppUserModelId(){}, requestSingleInstanceLock:()=>true,
     whenReady:()=>Promise.resolve(), getVersion:()=> '2.3.0',
+    getName:()=> 'GPT Usage Orb Safe',dock:{hide:()=>{calls.dockHides++;}},
     getGPUFeatureStatus(){assert.fail('orb startup must not depend on GPU feature status');},
     getGPUInfo(){assert.fail('orb startup must not request GPU information');},
     getPath:name => { assert.equal(name, 'userData'); return userData; },
     getAppPath:()=>path.resolve(__dirname, '..'),
     setLoginItemSettings:value => calls.login.push(value),
-    getLoginItemSettings:()=>({openAtLogin:calls.login.at(-1)?.openAtLogin || false}),
+    getLoginItemSettings:()=>loginStatus||({openAtLogin:calls.login.at(-1)?.openAtLogin || false}),
     quit(){calls.quit += 1; app.emit('before-quit', {preventDefault(){}});}
   });
   class Window extends EventEmitter {
@@ -55,6 +58,8 @@ async function launch({preferences, managedLogin, managedStop, bridgeFails = fal
     setAlwaysOnTop(){} setOpacity(value){(this.opacities||=[]).push(value);} focus(){this.focusCalls=(this.focusCalls||0)+1;}
     setBackgroundMaterial(value){if((backdropFails&&value==='acrylic')||(orbBackdropFails&&windows[0]===this))throw new Error('unavailable compositor');this.material=value;}
     setBackgroundColor(value){this.backgroundColor=value;}
+    setVibrancy(value){this.vibrancy=value;}
+    setVisibleOnAllWorkspaces(value,options){this.workspaces={value,options};}
     setShape(value){(this.shapes||=[]).push(clone(value));}
     showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
     isVisible(){return this.visible;}
@@ -64,8 +69,10 @@ async function launch({preferences, managedLogin, managedStop, bridgeFails = fal
     setPosition(x,y){Object.assign(this.bounds,{x,y});this.emit('move');}
   }
   class Tray extends EventEmitter {
+    constructor(){super();calls.tray=this;}
     setToolTip(value){this.tooltip=value;} setContextMenu(value){this.menu=value;}
     isDestroyed(){return false;} destroy(){} displayBalloon(value){calls.notifications.push(value);}
+    popUpContextMenu(){calls.trayPopups++;}
   }
   class Provider {
     constructor(options) {
@@ -102,12 +109,12 @@ async function launch({preferences, managedLogin, managedStop, bridgeFails = fal
       getDisplayNearestPoint:()=>({workArea}),
       getDisplayMatching:()=>({workArea}),getCursorScreenPoint:()=>({x:0,y:0})
     }),
-    Menu:{setApplicationMenu(){},buildFromTemplate:items=>({items,popup(){}})},
-    nativeImage:{createFromPath:()=>({resize:()=>({})})},
+    Menu:{setApplicationMenu:menu=>calls.menus.push(menu),buildFromTemplate:items=>({items,popup(){}})},
+    nativeImage:{createFromPath:()=>({resize:()=>({})}),createFromBitmap:()=>({setTemplateImage:value=>{calls.templateImage=value;}})},
     shell:{openExternal:async url=>{calls.external.push(url);},openPath:async value=>{calls.openPath.push(value);return '';}},
     Notification:{isSupported:()=>false},
-    globalShortcut:{register(){},unregisterAll(){}},
-    dialog:{showErrorBox:(...args)=>calls.errors.push(args)},
+    globalShortcut:{register:key=>calls.shortcuts.push(key),unregisterAll(){}},
+    dialog:{showErrorBox:(...args)=>calls.errors.push(args),showMessageBox:async(...args)=>calls.dialogs.push(args)},
     clipboard:{writeText:value=>calls.clipboard.push(value)}
   };
   const virtualFs={
@@ -121,6 +128,10 @@ async function launch({preferences, managedLogin, managedStop, bridgeFails = fal
     './security.cjs':security,'./bridge.cjs':{UsageBridge:Bridge},
     './extension-store.cjs':{syncExtension:async()=>({path:'/virtual-orb/extension',version:'2.3.0',changed:false})},
     './updater.cjs':{UpdateManager:class {constructor(){throw new Error('not packaged');}}},
+    './mac-updater.cjs':{MacUpdateManager:class {
+      constructor(options){this.options=options;this.checked=0;this.installed=0;this.stopped=false;calls.updaters.push(this);}
+      snapshot(){return{status:'idle',installMode:'manual',currentVersion:this.options.appVersion,repository:this.options.config?.repository};}
+      check(){this.checked++;return this.snapshot();}install(){this.installed++;return{ok:true};}stop(){this.stopped=true;}}},
     './codex-provider.cjs':{CodexProvider:Provider},
     './codex-setup.cjs':require('../src/codex-setup.cjs'),
     './codex-directories.cjs':{prepareManagedDirectories:async()=>({codexHome:'/virtual-orb/user-data/codex-managed-home',cwd:'/virtual-orb/user-data/codex-query'})},
@@ -137,7 +148,7 @@ async function launch({preferences, managedLogin, managedStop, bridgeFails = fal
   vm.runInNewContext(mainSource, {
     require:name=>{assert.ok(Object.hasOwn(modules,name),`Unexpected dependency: ${name}`);return modules[name];},
     __dirname:path.dirname(mainFile),
-    process:{platform:'win32',arch:'x64',argv:[],env:{},execPath:'/virtual-orb/orb.exe',resourcesPath:'/virtual-orb/resources'},
+    process:{platform,arch,argv:[],env:{},execPath:'/virtual-orb/orb.exe',resourcesPath:'/virtual-orb/resources'},Buffer,
     setTimeout:addTimer,setInterval:addTimer,clearTimeout:id=>timers.delete(id),clearInterval:id=>timers.delete(id)
   },{filename:mainFile});
   await settle();
@@ -766,4 +777,46 @@ test('managed auth waits for a prior quota child and does not start after a fail
   assert.equal((await blocked.action('connectCodex')).ok,false);
   assert.equal(blocked.calls.componentDownloads,0);assert.equal(blocked.calls.managedLogins.length,0);
   assert.doesNotMatch(JSON.stringify(blocked.state()),/private child details/);
+});
+
+test('Mac shell has native panel vibrancy, alpha orb, menu bar controls and no passive authentication',async()=>{
+  const h=await launch({platform:'darwin',arch:'arm64',release:'24.0.0'});
+  assert.equal(h.state().platform,'darwin');assert.equal(h.calls.templateImage,true);assert.equal(h.calls.dockHides,1);
+  assert.equal(h.calls.tray.menu,undefined,'static menus must not consume left clicks');
+  h.calls.tray.emit('click');assert.equal(h.windows[1].visible,true);
+  h.calls.tray.emit('click');assert.equal(h.windows[1].visible,false);
+  h.calls.tray.emit('right-click');assert.equal(h.calls.trayPopups,1);
+  h.app.emit('activate');assert.equal(h.windows[1].visible,true);
+  assert.equal(h.windows[1].vibrancy,'under-window');assert.equal(h.windows[1].options.visualEffectState,'active');
+  assert.equal(h.windows[0].vibrancy,undefined);assert.equal(h.windows[0].options.transparent,true);
+  assert.equal(h.windows[0].shapes,undefined);assert.equal(h.windows[0].workspaces.value,true);
+  assert.equal(h.state().appearance.nativeBackdrop,true);
+  assert.deepEqual(h.calls.shortcuts,['CommandOrControl+Alt+G']);
+  assert.equal(h.calls.componentDownloads,0);assert.deepEqual(h.calls.managedLogins,[]);
+  await h.action('copyCodexSetup');assert.match(h.calls.clipboard[0],/npm install -g @openai\/codex/);
+  assert.doesNotMatch(h.calls.clipboard[0],/npm\.cmd|codex\.cmd|LASTEXITCODE/);
+});
+
+test('packaged Mac uses architecture-specific manual updates and native login-item registration',async()=>{
+  for(const arch of ['arm64','x64']){
+    const h=await launch({platform:'darwin',arch,isPackaged:true});
+    assert.equal(h.calls.updaters.length,1);assert.equal(h.calls.updaters[0].options.arch,arch);
+    assert.equal(h.state().updates.installMode,'manual');assert.equal(h.calls.updaters[0].checked,0);
+    assert.equal((await h.action('checkUpdates')).ok,true);assert.equal(h.calls.updaters[0].checked,1);
+    assert.equal((await h.action('installUpdate')).ok,true);assert.equal(h.calls.updaters[0].installed,1);
+    assert.equal((await h.action('setSettings',{autoStart:true})).ok,true);
+    assert.deepEqual(clone(h.calls.login.at(-1)),{openAtLogin:true,type:'mainAppService'});
+    assert.equal(h.state().settings.autoStart,true);
+    await h.quit();assert.equal(h.calls.updaters[0].stopped,true);
+  }
+});
+
+test('Mac respects OS-disabled startup and login-launched app does not open the panel',async()=>{
+  const h=await launch({platform:'darwin',isPackaged:true,preferences:{settings:{autoStart:true}},loginStatus:{openAtLogin:false,wasOpenedAtLogin:true,status:'not-registered'}});
+  assert.equal(h.state().settings.autoStart,false);assert.deepEqual(h.calls.login,[]);
+  h.windows[1].emit('ready-to-show');assert.equal(h.windows[1].visible,false);
+  assert.equal((await h.action('setSettings',{autoStart:true})).ok,false);assert.equal(h.state().settings.autoStart,false);
+  const development=await launch({platform:'darwin'});
+  assert.equal((await development.action('setSettings',{autoStart:true})).ok,false);
+  assert.deepEqual(development.calls.login,[]);
 });

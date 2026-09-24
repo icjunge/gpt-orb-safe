@@ -8,6 +8,7 @@ const {pathToFileURL} = require('node:url');
 const {UsageBridge} = require('./bridge.cjs');
 const {syncExtension} = require('./extension-store.cjs');
 const {UpdateManager} = require('./updater.cjs');
+const {MacUpdateManager} = require('./mac-updater.cjs');
 const {validSettings,allowedSender} = require('./security.cjs');
 const {CodexProvider} = require('./codex-provider.cjs');
 const {discoverCodex} = require('./codex-discovery.cjs');
@@ -18,7 +19,7 @@ const {prepareManagedDirectories} = require('./codex-directories.cjs');
 const {supportsAcrylic,systemAppearance,applyPanelMaterial,applyOrbMaterial} = require('./window-material.cjs');
 const {COMPACT_SIZE,HOST_SIZE,HOST_INSET,createOrbController} = require('./orb-window.cjs');
 app.setName('GPT Usage Orb Safe');
-app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
+if(process.platform==='win32')app.setAppUserModelId('GPTUsageOrb.Safe.Desktop');
 // App-local material scheme; does not change the Windows system theme.
 nativeTheme.themeSource='dark';
 let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
@@ -65,7 +66,7 @@ function currentError(){const status=nativeStatus();return settings.usageSource=
 function state(){const status=bridge?.getStatus()||{listening:false,connected:false,lastReceivedAt:null,port:43861};
   const activeError=currentError();
   return {status:activeError?'error':snapshot?'ready':settings.usageSource==='codex-cli'||status.listening?'waiting':'starting',
-    bridge:status,snapshot,settings,appearance,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
+    platform:process.platform,bridge:status,snapshot,settings,appearance,error:activeError,codex:nativeStatus(),usageSource:settings.usageSource,staleAfterMs:staleAfterMs(),
     codexSetup:{...setupStatus(),
       mode:settings.codexConnection,hasLogin:settings.codexManagedConnected},
     updates:updateManager?.snapshot()||unavailableUpdates(),
@@ -135,6 +136,7 @@ function applyOrbOpacity(){
 function createWindows(){
   const common={frame:false,transparent:true,backgroundColor:'#00000000',resizable:false,maximizable:false,
     minimizable:false,fullscreenable:false,show:false,skipTaskbar:true,icon:path.join(__dirname,'../assets/orb.png'),
+    ...(process.platform==='darwin'?{hiddenInMissionControl:true}:{}),
     webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,
       webSecurity:true,webviewTag:false,backgroundThrottling:true,spellcheck:false}};
   // A transparent, shaped host avoids DWM's rectangular Acrylic fallback.
@@ -147,7 +149,7 @@ function createWindows(){
   for(const event of['move','resize'])orbWindow.on(event,()=>orbController.reconcileNativeBounds());
   const nativePanel=supportsAcrylic(process.platform,os.release());
   panelWindow=new BrowserWindow({...common,width:340,height:panelHeight,hasShadow:true,roundedCorners:true,
-    transparent:!nativePanel});
+    transparent:!nativePanel,...(process.platform==='darwin'?{visualEffectState:'active',vibrancy:nativeTheme.prefersReducedTransparency?undefined:'under-window'}:{})});
   const updateAppearance=()=>{
     const options={platform:process.platform,release:os.release(),theme:nativeTheme};
     appearance={...applyPanelMaterial(panelWindow,options),...applyOrbMaterial(orbWindow,options)};
@@ -159,10 +161,11 @@ function createWindows(){
   panelWindow.once('closed',()=>nativeTheme.removeListener('updated',updateAppearance));
   for(const [win,name]of[[orbWindow,'orb'],[panelWindow,'panel']]){
     const file=path.join(__dirname,'ui',name+'.html');harden(win,file);win.setAlwaysOnTop(settings.alwaysOnTop,'floating');
+    if(process.platform==='darwin')win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true,skipTransformProcessType:true});
     win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});win.loadFile(file);
   }
   orbWindow.once('ready-to-show',()=>orbWindow.showInactive());
-  panelWindow.once('ready-to-show',()=>{if(!process.argv.includes('--startup'))showPanel();});
+  panelWindow.once('ready-to-show',()=>{if(!process.argv.includes('--startup')&&!openedAtMacLogin())showPanel();});
   orbWindow.webContents.on('context-menu',()=>trayMenu().popup({window:orbWindow}));
 }
 function trayMenu(){return Menu.buildFromTemplate([
@@ -176,9 +179,33 @@ function trayMenu(){return Menu.buildFromTemplate([
   {label:'打开官方用量页面',click:()=>void shell.openExternal('https://chatgpt.com/settings/usage?tab=overview')},
   {label:'断开本机同步',click:disconnect},{type:'separator'},{label:'退出 GPT 悬浮球',click:()=>app.quit()}
 ]);}
-function createTray(){tray=new Tray(nativeImage.createFromPath(path.join(__dirname,'../assets/orb.png')).resize({width:32,height:32}));
-  tray.setToolTip('GPT 悬浮球 · 本机额度查询');tray.setContextMenu(trayMenu());
+function trayImage(){
+  if(process.platform!=='darwin')return nativeImage.createFromPath(path.join(__dirname,'../assets/orb.png')).resize({width:32,height:32});
+  // An 18 pt, double-resolution monochrome template follows the menu bar's
+  // light/dark appearance. Rasterize locally; no image download or SVG runtime.
+  const size=36,bitmap=Buffer.alloc(size*size*4);
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
+    const radius=Math.hypot(x+.5-size/2,y+.5-size/2);
+    const coverage=Math.max(0,Math.min(1,1.8-Math.abs(radius-12.5)))+Math.max(0,Math.min(1,3.5-radius));
+    bitmap[(y*size+x)*4+3]=Math.round(Math.min(1,coverage)*255);
+  }
+  const icon=nativeImage.createFromBitmap(bitmap,{width:size,height:size,scaleFactor:2});
+  icon.setTemplateImage(true);return icon;
+}
+function refreshTrayMenu(){if(process.platform!=='darwin')tray?.setContextMenu(trayMenu());}
+function createTray(){tray=new Tray(trayImage());
+  tray.setToolTip('GPT 悬浮球 · 本机额度查询');refreshTrayMenu();
   tray.on('click',togglePanel);tray.on('double-click',showPanel);tray.on('balloon-click',showPanel);
+  if(process.platform==='darwin'){
+    // A persistent macOS context menu takes over left-clicks. Open it only on
+    // right-click so the normal click can continue to toggle the usage panel.
+    tray.on('right-click',()=>tray.popUpContextMenu(trayMenu()));
+    void app.dock?.hide();
+  }
+}
+function openedAtMacLogin(){
+  if(process.platform!=='darwin')return false;
+  try{return app.getLoginItemSettings({type:'mainAppService'}).wasOpenedAtLogin===true;}catch{return false;}
 }
 function applySettings(input){
   const next=validSettings(input,settings);
@@ -188,9 +215,22 @@ function applySettings(input){
     return{ok:false,error:'请先完成或取消当前连接。'};
   if(sourceChanged||modeChanged||next.usageSource!=='codex-cli')next.codexEnabled=false;
   const nativeChanged=sourceChanged||modeChanged||next.codexEnabled!==settings.codexEnabled||next.refreshMinutes!==settings.refreshMinutes;
-  if(next.autoStart!==settings.autoStart&&process.platform==='win32'){
-    app.setLoginItemSettings({openAtLogin:next.autoStart,path:process.execPath,args:['--startup']});
-    next.autoStart=app.getLoginItemSettings({path:process.execPath,args:['--startup']}).openAtLogin;
+  if(next.autoStart!==settings.autoStart){
+    try{
+      if(process.platform==='win32'){
+        app.setLoginItemSettings({openAtLogin:next.autoStart,path:process.execPath,args:['--startup']});
+        next.autoStart=app.getLoginItemSettings({path:process.execPath,args:['--startup']}).openAtLogin;
+      }else if(process.platform==='darwin'){
+        if(!app.isPackaged)return{ok:false,error:'请从应用程序文件夹运行安装版，再设置登录时启动。'};
+        const requested=next.autoStart;
+        app.setLoginItemSettings({openAtLogin:requested,type:'mainAppService'});
+        const login=app.getLoginItemSettings({type:'mainAppService'});
+        next.autoStart=login.openAtLogin===true||login.status==='requires-approval';
+        if(next.autoStart!==requested)return{ok:false,error:'系统未能修改登录时启动，请在系统设置的登录项中检查。'};
+        if(requested&&login.status==='requires-approval')void dialog.showMessageBox(panelWindow,{type:'info',title:'允许登录时启动',
+          message:'启动项需要系统允许',detail:'请在系统设置的「登录项」中允许 GPT Usage Orb Safe。',buttons:['知道了']});
+      }
+    }catch{return{ok:false,error:'系统未能修改启动项，请在系统设置的登录项中检查。'};}
   }
   const newlyEnabled=next.autoCheckUpdates&&!settings.autoCheckUpdates;
   settings=next;if(newlyEnabled)void updateManager?.check({download:true});
@@ -201,9 +241,9 @@ function applySettings(input){
   }
   orbWindow.setAlwaysOnTop(settings.alwaysOnTop,'floating');panelWindow.setAlwaysOnTop(settings.alwaysOnTop,'floating');
   applyOrbOpacity();
-  saveSettings();tray?.setContextMenu(trayMenu());publish();return{ok:true};
+  saveSettings();refreshTrayMenu();publish();return{ok:true};
 }
-function disconnect(){void codexSetup?.cancel();codexProvider?.stop();settings.codexEnabled=false;saveSettings();snapshot=null;notified.clear();bridge?.rotateKey();tray?.setContextMenu(trayMenu());publish();}
+function disconnect(){void codexSetup?.cancel();codexProvider?.stop();settings.codexEnabled=false;saveSettings();snapshot=null;notified.clear();bridge?.rotateKey();refreshTrayMenu();publish();}
 function notifyLow(){
   if(!settings.notifications||!['official-page','codex-cli'].includes(snapshot?.source)||Date.now()-snapshot.capturedAt>staleAfterMs())return;
   if(snapshot.source==='codex-cli'&&!nativeStatus().enabled)return;
@@ -252,7 +292,7 @@ function registerIpc(){
         if(codexSetup?.busy)return{ok:false,error:'请先完成或取消当前连接。'};
         if(settings.usageSource!=='codex-cli'||!settings.codexEnabled||!codexProvider)return{ok:false,error:'请先开启本机 Codex 读取。'};
         void codexProvider.refresh();break;
-      case'copyCodexSetup':clipboard.writeText('npm.cmd install -g @openai/codex\r\nif ($LASTEXITCODE -eq 0) { codex.cmd login }');break;
+      case'copyCodexSetup':clipboard.writeText(process.platform==='darwin'?'npm install -g @openai/codex && codex login':'npm.cmd install -g @openai/codex\r\nif ($LASTEXITCODE -eq 0) { codex.cmd login }');break;
       case'openCodexHelp':await shell.openExternal('https://developers.openai.com/codex/cli');break;
       case'openDashboard':await shell.openExternal('https://chatgpt.com/settings/usage?tab=overview');break;
       case'openExtensionFolder':{
@@ -297,8 +337,19 @@ function registerIpc(){
 if(!app.requestSingleInstanceLock())app.quit();
 else{
   app.on('second-instance',showPanel);
+  app.on('activate',showPanel);
   app.whenReady().then(async()=>{
-    Menu.setApplicationMenu(null);loadSettings();
+    Menu.setApplicationMenu(process.platform==='darwin'?Menu.buildFromTemplate([
+      {label:app.getName(),submenu:[{label:'显示用量面板',click:showPanel},{type:'separator'},{role:'hide'},{role:'hideOthers'},
+        {role:'unhide'},{type:'separator'},{label:'退出 GPT 悬浮球',role:'quit'}]},
+      {label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]}
+    ]):null);loadSettings();
+    // Respect changes made in System Settings rather than re-registering a
+    // disabled Mac login item at every launch. Windows migration is separate.
+    if(process.platform==='darwin'&&app.isPackaged)try{
+      const login=app.getLoginItemSettings({type:'mainAppService'});
+      settings.autoStart=login.openAtLogin===true||login.status==='requires-approval';
+    }catch{settings.autoStart=false;}
     fs.mkdirSync(app.getPath('userData'),{recursive:true});
     extensionInfo=await syncExtension({sourceDir:path.join(app.getAppPath(),'extension'),userData:app.getPath('userData')});
     if(quitting)return;
@@ -319,10 +370,10 @@ else{
         return directories?runtime.getVerifiedExecutable(options):null;}};
     codexSetup=new CodexSetup({runtime:codexRuntime,login:loginManagedCodex,logout:logoutManagedCodex,codexHome,cwd:codexWorkingDirectory,
       openExternal:url=>shell.openExternal(url),onState:publish,
-      onDisconnect:async()=>{const stopped=codexProvider?.stopAndWait();settings.codexEnabled=false;snapshot=null;notified.clear();saveSettings();tray?.setContextMenu(trayMenu());publish();await stopped;},
+      onDisconnect:async()=>{const stopped=codexProvider?.stopAndWait();settings.codexEnabled=false;snapshot=null;notified.clear();saveSettings();refreshTrayMenu();publish();await stopped;},
       onConnected:()=>{if(quitting||settings.usageSource!=='codex-cli'||settings.codexConnection!=='managed')return;
         settings.codexManagedConnected=true;settings.codexEnabled=true;saveSettings();
-        void codexProvider?.start(settings.refreshMinutes);tray?.setContextMenu(trayMenu());publish();}});
+        void codexProvider?.start(settings.refreshMinutes);refreshTrayMenu();publish();}});
     if(settings.codexManagedConnected)codexSetup.markConnected();
     codexProvider=new CodexProvider({discover:async({signal}={})=>{
       if(settings.codexConnection==='existing')return discoverCodex();
@@ -333,12 +384,15 @@ else{
         if(settings.codexConnection==='managed'){settings.codexManagedConnected=true;codexSetup.markConnected();saveSettings();}
         snapshot=value;publish();notifyLow();}},
       onClear:()=>{if(settings.usageSource==='codex-cli'){snapshot=null;notified.clear();publish();}}});
-    // NSIS installs supply app-update.yml. Legacy portable packages cannot safely
-    // use this updater and never fall back to an unsigned download-and-run path.
-    if(process.platform==='win32'&&app.isPackaged&&!process.env.PORTABLE_EXECUTABLE_FILE&&
+    // Packaged apps supply this reviewed source marker. macOS uses a separate
+    // signed-metadata/manual-download flow until Developer ID distribution is set up.
+    // Legacy portable Windows copies cannot fall back to an unsigned updater.
+    if(['win32','darwin'].includes(process.platform)&&app.isPackaged&&!process.env.PORTABLE_EXECUTABLE_FILE&&
       fs.existsSync(path.join(process.resourcesPath,'app-update.yml'))){
       let config;try{config=JSON.parse(fs.readFileSync(path.join(app.getAppPath(),'update-config.json'),'utf8'));}catch{config=null;}
-      updateManager=new UpdateManager({appVersion:app.getVersion(),config,userData:app.getPath('userData'),onState:publish});
+      updateManager=process.platform==='darwin'
+        ?new MacUpdateManager({appVersion:app.getVersion(),config,arch:process.arch,onState:publish,openExternal:url=>shell.openExternal(url)})
+        :new UpdateManager({appVersion:app.getVersion(),config,userData:app.getPath('userData'),onState:publish});
       const check=()=>{if(settings.autoCheckUpdates&&!quitting)void updateManager.check({download:true});};
       firstUpdateTimer=setTimeout(check,10000);updateTimer=setInterval(check,6*60*60*1000);
     }

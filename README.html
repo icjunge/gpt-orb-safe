@@ -10,12 +10,19 @@
 </style>
 </head>
 <body><main>
-<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.6.0</div><h1>登录一次，<br>额度随时可见。</h1><p class="lead">Windows 10 / 11 · x64<br>点击连接、官方网页登录，之后自动刷新。普通用户无需 Node.js、Git 或命令行。</p></header>
-<div class="callout"><strong>已有用户直接在应用内更新。</strong><br>设置 → 版本与更新 → 检查更新 → 重启并更新。升级保留原有连接方式、刷新设置与圆球样式；源码提交、标签或草稿不等于已正式发布。</div>
+<header><div class="eyebrow">GPT USAGE ORB / VERSION 2.6.0</div><h1>登录一次，<br>额度随时可见。</h1><p class="lead">Windows 10 / 11 · x64<br>macOS 13+ · Apple Silicon / Intel<br>点击连接、官方网页登录，之后自动刷新。普通用户无需 Node.js、Git 或命令行。</p></header>
+<div class="callout"><strong>新增 Mac 版，保留一键连接。</strong><br>Windows 在应用内检查更新、重启安装；Mac 检查更新后下载 DMG，退出应用并替换旧版。升级保留原有连接方式、刷新设置与圆球样式；源码提交、标签或草稿不等于已正式发布。</div>
 <h2>第一次使用</h2>
+<p>从<a href="https://github.com/icjunge/gpt-orb-safe/releases/latest" rel="noopener noreferrer">正式发布页</a>选择与你的电脑匹配的安装包，无需源码 ZIP 或扩展 ZIP。</p>
+<table><thead><tr><th>电脑</th><th>安装包</th></tr></thead><tbody>
+<tr><td>Windows x64</td><td><code>GPT-Orb-Setup-X.Y.Z-x64.exe</code></td></tr>
+<tr><td>Mac M 系列</td><td><code>GPT-Orb-Setup-X.Y.Z-arm64.dmg</code></td></tr>
+<tr><td>Mac Intel</td><td><code>GPT-Orb-Setup-X.Y.Z-x64.dmg</code></td></tr>
+</tbody></table>
+<p>Mac 可在「 → 关于本机」查看芯片。打开 DMG，将应用拖入「应用程序」，再从该目录启动。</p>
+<p>Mac 首版没有 Apple Developer ID 签名或公证。若提示无法验证开发者，在确认来自本仓库后，按<a href="https://support.apple.com/102445" rel="noopener noreferrer">Apple 官方说明</a>，先尝试打开，再进入「系统设置 → 隐私与安全性 → 仍要打开」。若提示应用已损坏或含恶意软件，请停止使用并核对下载，不关闭系统安全检查。</p>
 <ol>
-<li>从<a href="https://github.com/icjunge/gpt-orb-safe/releases/latest" rel="noopener noreferrer">正式发布页</a>下载 <code>GPT-Orb-Setup-X.Y.Z-x64.exe</code> 并安装。无需源码 ZIP 或扩展 ZIP。</li>
-<li>点击<strong>「连接 Codex」</strong>。首次准备约 85 MB 的官方组件，界面显示进度，可以取消；下载速度取决于网络。校验后的组件会缓存，同一版本无需重复下载。</li>
+<li>点击<strong>「连接 Codex」</strong>。首次准备约 80–90 MB 的官方组件，界面显示进度，可以取消；下载速度取决于网络。校验后的组件会缓存，同一版本无需重复下载。</li>
 <li>在自动打开的 <strong>OpenAI 官方页面</strong>登录自己的 ChatGPT 账号，并完成必要验证。不要向悬浮球提供密码、验证码或令牌。</li>
 <li>登录成功后自动显示额度，默认每 5 分钟刷新。在设置可调整为 1–1440 分钟，或立即刷新。浏览器可以关闭，悬浮球需保持运行。</li>
 </ol>
@@ -28,10 +35,10 @@
 <tr><td>关闭 / 卸载</td><td>不等于退出账号；卸载前如需清除登录，先点击「退出此账号」。</td></tr>
 </tbody></table>
 <p>旧用户升级后沿用已有 CLI，不强制登录。想改为一键连接，在「设置 → 已有 Codex / 手动设置 → 连接方式」选「自动配置（推荐）」，再连接。</p>
-<details><summary>高级：继续使用本机已安装的 Codex</summary><p>选择「使用本机已安装的 Codex」，沿用其账号和原凭据配置，应用不会自动安装、登录、升级或退出该 CLI。首次手动安装可在 PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后 <code>codex.cmd login</code>。仅这种方式需要 Node.js/npm；无需修改 PowerShell 执行策略。安装后重启终端与悬浮球，再点击「开启读取」。</p></details>
+<details><summary>高级：继续使用本机已安装的 Codex</summary><p>选择「使用本机已安装的 Codex」，沿用其账号和原凭据配置，应用不会自动安装、登录、升级或退出该 CLI。首次手动安装可在 PowerShell 执行 <code>npm.cmd install -g @openai/codex</code>，成功后 <code>codex.cmd login</code>。Mac 手动安装可执行 <code>npm install -g @openai/codex</code>，成功后 <code>codex login</code>。仅这种方式需要 Node.js/npm；Windows 无需修改 PowerShell 执行策略。安装后重启终端与悬浮球，再点击「开启读取」。</p></details>
 <h2>分享给朋友</h2>
-<p>分享<a href="https://github.com/icjunge/gpt-orb-safe/releases/latest" rel="noopener noreferrer">正式发布页</a>或其中的 x64 EXE 即可，对方安装后登录自己的账号。以后在应用内更新。<strong>不要分享用户数据目录、登录状态、配对码或发布私钥。</strong></p>
-<p>应用更新使用 Ed25519 验签；这不等于 Windows Authenticode 发布者证书。当前安装包没有 Windows 发布者签名，系统可能提示未知发布者，请核对来源。</p>
+<p>分享<a href="https://github.com/icjunge/gpt-orb-safe/releases/latest" rel="noopener noreferrer">正式发布页</a>，让对方选择对应系统与芯片的安装包，安装后登录自己的账号。以后可在应用内检查更新。<strong>不要分享用户数据目录、登录状态、配对码或发布私钥。</strong></p>
+<p>应用更新使用 Ed25519 验签；这不等于 Windows Authenticode 发布者证书或 Apple 公证。当前 Windows 没有发布者签名，Mac 仅有 ad-hoc 签名，系统可能提示无法验证开发者，请核对来源。</p>
 <h2>读数表示什么</h2>
 <table><thead><tr><th>显示内容</th><th>含义</th></tr></thead><tbody>
 <tr><td>剩余额度</td><td>官方返回的独立窗口，各自显示，不相加。未返回 Spark 等独立窗口时不编造。</td></tr>
@@ -42,7 +49,7 @@
 </tbody></table>
 <p>普通查询失败保留上次有效记录，退出或账号变化时清除旧账号读数。离线、睡眠、服务端延迟或接口变更可能影响刷新，无法识别的字段保持未知。</p>
 <h2>账号与安全</h2>
-<p>自动配置下载固定 <strong>0.134.0</strong> 官方组件，分别校验压缩包和可执行文件的固定长度及 SHA-256。使用独立 <code>CODEX_HOME</code>，登录由官方组件保存到系统凭据库；系统库不可用时连接失败，不回退明文文件，不覆盖已有 CLI 登录。</p>
+<p>自动配置下载固定 <strong>0.134.0</strong> 官方组件，分别校验压缩包和可执行文件的固定长度及 SHA-256。使用独立 <code>CODEX_HOME</code>，登录由官方组件保存到 Windows 凭据库 / macOS 钥匙串；系统库不可用时连接失败，不回退明文文件，不覆盖已有 CLI 登录。</p>
 <p>悬浮球不读取或复制 <code>auth.json</code>、Cookie、密码或令牌，不记录原始 RPC，不扫描会话日志。已有 CLI 模式的文件 / 系统凭据库策略仍取决于该 CLI 的原配置。</p>
 <p><strong>这是正常 Codex 账号授权，不是仅限用量的 OAuth scope。</strong>应用限制自身操作为连接、取消、退出和固定查询，不发起模型任务、对话或额度重置；不能把界面限制当作凭据权限本身的限制。</p>
 <p>组件下载和应用更新不携带账号凭据，无需 GitHub 登录或 PAT；没有自建云用量同步或额外遥测。工具不能防御已控制本机的恶意软件。</p>
@@ -50,12 +57,14 @@
 <p>仅主动选择「浏览器扩展」来源时需要。在桌面打开固定扩展目录，Chrome / Edge 开启开发者模式后加载直接包含 <code>manifest.json</code> 的目录，再打开<a href="https://chatgpt.com/settings/usage?tab=overview" rel="noopener noreferrer">官方用量页</a>并配对。</p>
 <p>浏览器备用模式需要浏览器运行：当前页模式需保留页面；可选定时模式授权后会临时打开非活动用量页。退出、浏览器重启或扩展重载后需重新配对。改用本机读取后，建议在扩展点击「关闭并撤销授权」。不需要备用模式就无需安装扩展。</p>
 <h2>日常使用与更新</h2>
-<p>圆球常态 48 像素，悬停 56 像素，始终只显示百分比。固定透明窗口、玻璃边缘与长按位置修复保留。拖动移动，点击开关面板；托盘或 <code>Ctrl + Alt + G</code> 可找回面板。</p>
-<p>已配置的安装版启动约 10 秒后、此后每 6 小时检查更新，也可手动检查或关闭自动检查。签名、版本、长度和哈希验证通过后，由你点击「重启并更新」。普通退出不会安装待更新包。</p>
-<p>应用更新包含桌面、Electron 和备用扩展；官方组件独立下载并缓存，已有 CLI 不由应用更新。安装前备份偏好设置；这不是完整程序快照或自动回滚，安装中断可能需要可信安装器修复。</p>
+<p>圆球常态 48 像素，悬停 56 像素，始终只显示百分比。固定透明窗口、玻璃边缘与长按位置修复保留。拖动移动，点击开关面板；Windows 托盘或 <code>Ctrl + Alt + G</code> 可找回面板；Mac 左键点击菜单栏图标展开面板，右键打开菜单，也可用 <code>⌘ + ⌥ + G</code>。</p>
+<p>Mac 详情面板使用系统毛玻璃，圆球保持透明窗口与玻璃边缘，不承诺圆球跨窗口模糊。无需屏幕录制或辅助功能权限。开机启动默认关闭；Mac 可能需要在系统「登录项」中允许，未公证版本不保证系统接受。</p>
+<p>已配置的安装版启动约 10 秒后、此后每 6 小时检查更新，也可手动检查或关闭自动检查。Windows 在签名、版本、长度和哈希验证通过后，由你点击「重启并更新」；普通退出不会安装待更新包。</p>
+<p><strong>Mac 首版暂不自动替换应用。</strong>应用验证对应芯片的签名更新描述后，点击「下载 Mac 新版」在浏览器打开官方 DMG 下载。下载后退出悬浮球，将新应用拖入「应用程序」并替换旧版，保留设置与独立登录。应用仅验证更新描述，不校验浏览器下载到磁盘的 DMG；发布页提供 SHA-256 文件供另行核对。</p>
+<p>应用更新包含桌面、Electron 和备用扩展；官方组件独立下载并缓存，已有 CLI 不由应用更新。Windows 安装更新前备份偏好设置；这不是完整程序快照或自动回滚，安装中断可能需要可信安装器修复。</p>
 <h2>卸载与验证范围</h2>
-<p>自动配置用户需要清除登录时，先点击「退出此账号」并确认成功。关闭开机启动、退出应用，再从 Windows 已安装应用卸载；不再使用的浏览器扩展可移除。用户目录默认保留，删除目录不能保证移除系统凭据库登录。</p>
-<p>自动测试覆盖组件、登录状态、查询及更新边界，模拟协议不会使用真实账号。干净 Windows 的首次安装、真实官方网页登录与额度读取仍需实机验收；实际完成范围以发布记录为准。</p>
+<p>自动配置用户需要清除登录时，先点击「退出此账号」并确认成功。关闭开机启动、退出应用，再从 Windows 已安装应用卸载，或将 Mac「应用程序」中的应用移到废纸篓；不再使用的浏览器扩展可移除。用户目录默认保留，删除目录不能保证移除系统凭据库登录。</p>
+<p>自动测试覆盖组件、登录状态、查询及更新边界，模拟协议不会使用真实账号。干净 Windows / Mac 的首次安装、真实官方网页登录与额度读取仍需实机验收；实际完成范围以发布记录为准。</p>
 <details><summary>开发者：源码与维护</summary><p>可信仓库内执行 <code>npm ci</code>、<code>npm test</code>、<code>npm start</code>；开发需要 Node.js 22.12+，不要跳过 Electron 安装脚本。源码运行不更新现有安装版。<code>npm run extension:update</code> 只维护固定扩展目录，不能更新桌面。</p></details>
 <p>完整说明：<a href="README.md">README.md</a> · <a href="SECURITY.md">SECURITY.md</a> · <a href="RELEASE.md">发布流程</a>。</p>
 <footer>GPT 悬浮球 2.6.0 · 独立制作，非 OpenAI 官方应用 · MIT 许可</footer>

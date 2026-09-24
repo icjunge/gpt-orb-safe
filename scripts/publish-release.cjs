@@ -4,13 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const { validateConfig, verifyEnvelope, verifyInstaller } = require('../src/update-security.cjs');
+const { validateConfig, verifyEnvelope, verifyMacEnvelope, verifyInstaller } = require('../src/update-security.cjs');
 const { releaseContext, githubClient, requireExactTag, requireNewerRelease } = require('./release-github.cjs');
 
 async function verifiedAssets(directory, context, config) {
   const names = [`GPT-Orb-Setup-${context.version}-x64.exe`, `GPT-Orb-${context.version}-Source.zip`,
     `GPT-Orb-${context.version}-Browser-Extension.zip`, 'orb-update.json', 'latest.yml',
     `GPT-Orb-Setup-${context.version}-x64.exe.sha256`];
+  for (const arch of ['arm64', 'x64']) names.push(`GPT-Orb-Setup-${context.version}-${arch}.dmg`,
+    `GPT-Orb-Setup-${context.version}-${arch}.dmg.sha256`, `orb-update-mac-${arch}.json`);
   const assets = [];
   for (const name of names) {
     const filename = path.join(directory, name), stat = fs.lstatSync(filename);
@@ -26,6 +28,14 @@ async function verifiedAssets(directory, context, config) {
   if (fs.readFileSync(path.join(directory, 'latest.yml'), 'utf8') !== expectedYaml ||
       fs.readFileSync(path.join(directory, `${descriptor.file}.sha256`), 'utf8') !== `${descriptor.sha256}  ${descriptor.file}\n`) {
     throw new Error('Update metadata differs from the signed installer descriptor.');
+  }
+  for (const arch of ['arm64', 'x64']) {
+    const mac = verifyMacEnvelope(fs.readFileSync(path.join(directory, `orb-update-mac-${arch}.json`)), validateConfig(config), arch);
+    if (mac.version !== context.version || mac.tag !== context.tag) throw new Error('Signed macOS update version differs from the release.');
+    await verifyInstaller(path.join(directory, mac.file), mac);
+    if (fs.readFileSync(path.join(directory, `${mac.file}.sha256`), 'utf8') !== `${mac.sha256}  ${mac.file}\n`) {
+      throw new Error('macOS checksum metadata differs from the signed installer descriptor.');
+    }
   }
   return assets;
 }

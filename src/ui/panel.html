@@ -67,8 +67,8 @@
             <div class="source-picker connection-picker"><label for="codex-connection">连接方式</label><select id="codex-connection"><option value="managed">自动配置（推荐）</option><option value="existing">使用本机已安装的 Codex</option></select></div>
             <p id="connection-mode-note" class="group-description">自动配置使用独立的登录状态，不影响已有 Codex。</p>
             <div id="codex-setup" class="codex-setup">
-              <p>使用已有 Codex 时，可在 PowerShell 安装并登录同一个 ChatGPT 账号。</p>
-              <pre class="setup-commands"><code>npm.cmd install -g @openai/codex
+              <p id="manual-codex-description">使用已有 Codex 时，可在 PowerShell 安装并登录同一个 ChatGPT 账号。</p>
+              <pre class="setup-commands"><code id="manual-codex-command">npm.cmd install -g @openai/codex
 if ($LASTEXITCODE -eq 0) { codex.cmd login }</code></pre>
               <div class="codex-help-actions"><button id="copy-codex-setup-button" class="secondary-button">复制安装命令</button><button id="codex-help-button" class="text-button">安装说明 ↗</button></div>
             </div>

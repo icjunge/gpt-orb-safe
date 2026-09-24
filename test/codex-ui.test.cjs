@@ -456,6 +456,43 @@ test('material status distinguishes a compositor request from verified effect an
   assert.equal(h.calls.length, 0);
 });
 
+test('Mac setup uses native shortcuts and POSIX commands with macOS material copy', async () => {
+  const state=fixture({platform:'darwin',appearance:{nativeBackdrop:true,backdropStatus:'requested'}});
+  const h=harness('panel',state);await flush();
+  assert.match(h.node('settings-source-note').textContent,/⌘ \+ ⌥ \+ G/);
+  assert.doesNotMatch(h.node('settings-source-note').textContent,/Ctrl|Alt/);
+  assert.equal(h.node('manual-codex-command').textContent,'npm install -g @openai/codex && codex login');
+  assert.match(h.node('manual-codex-description').textContent,/终端/);
+  assert.match(h.node('material-status').textContent,/macOS/);
+  assert.doesNotMatch(h.node('material-status').textContent,/Windows/);
+  h.node('copy-codex-setup-button').dispatch('click');await flush();
+  assert.equal(h.calls.at(-1).name,'copyCodexSetup');
+  h.change({...state,platform:'win32'});
+  assert.match(h.node('manual-codex-command').textContent,/npm.cmd/);
+  assert.match(h.node('settings-source-note').textContent,/Ctrl \+ Alt \+ G/);
+});
+
+test('Mac updates require a download click and never promise downloaded files or automatic installation', async () => {
+  const state=fixture({platform:'darwin',updates:{status:'idle',installMode:'manual',currentVersion:'2.6.0',repository:'example/orb'}});
+  const h=harness('panel',state,async()=>({ok:true,manual:true}));await flush();
+  assert.equal(h.node('install-update-button').classList.contains('hidden'),true);
+  assert.equal(h.calls.length,0);
+  h.change({...state,updates:{...state.updates,status:'available',availableVersion:'2.7.0'}});
+  assert.equal(h.node('install-update-button').classList.contains('hidden'),false);
+  assert.match(h.node('install-update-button').textContent,/下载 Mac 新版/);
+  assert.doesNotMatch(h.node('install-update-button').textContent,/重启|安装/);
+  assert.match(h.node('update-status').textContent,/浏览器/);
+  assert.equal(h.node('update-progress-row').classList.contains('hidden'),true);
+  assert.equal(h.node('check-updates-button').disabled,false);
+  assert.equal(h.calls.length,0,'receiving an available update never downloads it');
+  h.node('install-update-button').dispatch('click');await flush();
+  assert.equal(h.calls.at(-1).name,'installUpdate');
+  assert.equal(h.node('install-update-button').disabled,false,'a browser download can be reopened');
+  h.change({...state,updates:{...state.updates,status:'checking'}});
+  assert.equal(h.node('install-update-button').classList.contains('hidden'),true);
+  assert.equal(h.node('update-progress-row').classList.contains('hidden'),true);
+});
+
 test('glass tint previews locally, saves only on change, and retains an in-progress drag across broadcasts', async () => {
   const state = fixture({ appearance: { nativeBackdrop: true, backdropStatus: 'requested' } }); const h = harness('panel', state); await flush();
   assert.equal(h.node('glass-tint').value, '16');

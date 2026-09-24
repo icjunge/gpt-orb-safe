@@ -210,3 +210,21 @@ test('Linux development accepts an executable native file and rejects script shi
   assert.equal(await discoverCodex(options), null);
   assert.equal(await discoverCodex({ ...options, env: { PATH: '.::relative:/tmp/../evil' } }), null);
 });
+
+test('Finder launch probes fixed Mac prefixes and accepts official Homebrew native target names without a shell',async()=>{
+  for(const arch of ['arm64','x64']){
+    const bin=arch==='arm64'?'/opt/homebrew/bin/codex':'/usr/local/bin/codex';
+    const target=`/opt/fixture-cask/codex-${arch==='arm64'?'aarch64':'x86_64'}-apple-darwin`;
+    const calls=[],bytes=Buffer.alloc(64);bytes.writeUInt32BE(0xcffaedfe,0);
+    let content=bytes;
+    const missing=()=>{throw Object.assign(new Error('fixture missing'),{code:'ENOENT'});};
+    const io={
+      async realpath(value){calls.push(value);return value===bin?target:missing();},
+      async open(value){assert.equal(value,target);return{async stat(){return{isFile:()=>true,size:content.length,mode:0o755};},
+        async read(buffer,offset,length,position){const n=Math.min(length,Math.max(0,content.length-position));content.copy(buffer,offset,position,position+n);return{bytesRead:n};},async close(){}};}};
+    const options={platform:'darwin',arch,env:{PATH:'/usr/bin:/bin',HOME:'/Users/Fixture'},fs:io};
+    assert.deepEqual(await discoverCodex(options),{path:target});
+    assert.ok(!calls.some(value=>/auth\.json|\.zshrc|\.bash_profile|\.codex\//.test(value)));
+    content=Buffer.from('#!/bin/sh\necho untrusted');assert.equal(await discoverCodex(options),null);
+  }
+});

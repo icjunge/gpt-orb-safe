@@ -34,6 +34,22 @@ win:
   icon: assets/orb.ico
   executableName: GPT-Orb
   signAndEditExecutable: false
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  icon: assets/orb-mac.svg
+  category: public.app-category.utilities
+  minimumSystemVersion: '13.0'
+  # No Developer ID certificate is configured. This is an explicitly ad-hoc
+  # signed build, not an Apple-notarized distribution or Squirrel.Mac feed.
+  identity: '-'
+  hardenedRuntime: true
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.plist
+  notarize: false
+dmg:
+  sign: false
 nsis:
   oneClick: true
   perMachine: false

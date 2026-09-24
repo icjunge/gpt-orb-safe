@@ -20,6 +20,23 @@ function systemAppearance(theme={}){
 
 function applyPanelMaterial(win,{platform,release,theme}={}){
   const appearance=systemAppearance(theme);
+  if(platform==='darwin'){
+    if(!win||win.isDestroyed())return appearance;
+    try{
+      // NSVisualEffectView samples the desktop behind the panel. Keep the view
+      // active when the user works in another app, without fading panel text.
+      win.setVibrancy(appearance.reducedTransparency?null:'under-window');
+      win.setBackgroundColor(appearance.reducedTransparency?FALLBACK_COLOR:'#00000000');
+      appearance.nativeBackdrop=!appearance.reducedTransparency;
+      if(appearance.nativeBackdrop)appearance.backdropStatus='requested';
+    }catch{
+      appearance.nativeBackdrop=false;
+      if(!appearance.reducedTransparency)appearance.backdropStatus='unavailable';
+      try{win.setVibrancy(null);}catch{}
+      try{win.setBackgroundColor(FALLBACK_COLOR);}catch{}
+    }
+    return appearance;
+  }
   if(!supportsAcrylic(platform,release)){
     if(!appearance.reducedTransparency)appearance.backdropStatus='unsupported';
     return appearance;
@@ -59,6 +76,9 @@ function applyOrbMaterial(win,options={}){
     // even when the GPU reports hardware composition. Keep the host transparent;
     // accessibility fills belong to the clipped circular surface in the renderer.
     try{if(supported)win.setBackgroundMaterial('none');}catch{}
+    // macOS cannot clip a BrowserWindow to Electron's setShape() region. A
+    // full-window vibrancy view here would recreate a visible square around
+    // the orb. Its circular CSS surface keeps the transparent alpha host.
     try{win.setBackgroundColor('#00000000');}catch{}
   }
   return{orbNativeHost:false,orbNativeBackdrop:false,orbBackdropStatus:material.backdropStatus};

@@ -9,23 +9,23 @@ const {EventEmitter} = require('node:events');
 const {Readable} = require('node:stream');
 const {gzipSync} = require('node:zlib');
 const {createHash} = require('node:crypto');
-const {PINNED_CODEX_RUNTIME, createCodexRuntime} = require('../src/codex-runtime.cjs');
+const {PINNED_CODEX_RUNTIME, PINNED_CODEX_RUNTIMES, getPinnedCodexRuntime, createCodexRuntime} = require('../src/codex-runtime.cjs');
 
 const digest = data => createHash('sha256').update(data).digest('hex');
 const EXE = Buffer.from('MZ-test-official-component-content');
-function tar(bytes = EXE, {name = PINNED_CODEX_RUNTIME.member, type = 48, size = bytes.length, suffix = null, checksum = true} = {}) {
+function tar(bytes = EXE, {name = PINNED_CODEX_RUNTIME.member, type = 48, size = bytes.length, suffix = null, checksum = true, posix = false} = {}) {
   const header = Buffer.alloc(512);
   header.write(name, 0, 100, 'utf8');
   header.write('0000755\0', 100, 8, 'ascii');
   header.write(`${size.toString(8).padStart(11, '0')}\0`, 124, 12, 'ascii');
-  header.fill(32, 148, 156); header[156] = type; header.write('ustar  \0', 257, 8, 'ascii');
+  header.fill(32, 148, 156); header[156] = type; header.write(posix ? 'ustar\0' + '00' : 'ustar  \0', 257, 8, 'ascii');
   const sum = header.reduce((total, byte) => total + byte, 0);
   header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
   if (!checksum) header[148] ^= 1;
   return Buffer.concat([header, bytes, Buffer.alloc((512 - bytes.length % 512) % 512), suffix || Buffer.alloc(1024)]);
 }
-function fixture(archive = gzipSync(tar()), executable = EXE) {
-  return {...PINNED_CODEX_RUNTIME, archiveBytes:archive.length, archiveSha256:digest(archive),
+function fixture(archive = gzipSync(tar()), executable = EXE, pin = PINNED_CODEX_RUNTIME) {
+  return {...pin, archiveBytes:archive.length, archiveSha256:digest(archive),
     executableBytes:executable.length, executableSha256:digest(executable)};
 }
 const CDN = 'https://release-assets.githubusercontent.com/github-production-release-asset/965415649/aabb-ccdd?sp=r&sig=fixture';
@@ -55,8 +55,8 @@ async function setup(t, options = {}, artifact = fixture(), network = fakeNetwor
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'orb-codex-component-'));
   t.after(() => fs.rm(root, {recursive:true, force:true}));
   const runtime = createCodexRuntime({userDataDir:root, request:network.request, platform:'win32', arch:'x64', ...options}, artifact);
-  const directory = path.join(root, 'components', 'codex', artifact.version, 'win32-x64');
-  return {runtime, root, directory, executable:path.join(directory, 'codex.exe'), ...network};
+  const directory = path.join(root, 'components', 'codex', artifact.version, `${artifact.platform}-${artifact.arch}`);
+  return {runtime, root, directory, executable:path.join(directory, artifact.platform === 'win32' ? 'codex.exe' : 'codex'), ...network};
 }
 async function noPartials(directory) {
   try { assert.deepEqual((await fs.readdir(directory)).filter(name => name.endsWith('.tmp')), []); }
@@ -71,6 +71,80 @@ test('production pin fixes official archive and executable independently', () =>
   assert.equal(PINNED_CODEX_RUNTIME.executableBytes, 240159536);
   assert.match(PINNED_CODEX_RUNTIME.url, /^https:\/\/github.com\/openai\/codex\/releases\/download\/rust-v0.134.0\//);
   assert(Object.isFrozen(PINNED_CODEX_RUNTIME));
+});
+test('platform selection is fixed to reviewed native architecture and never falls back to another architecture', () => {
+  assert.equal(getPinnedCodexRuntime('win32', 'x64'), PINNED_CODEX_RUNTIME);
+  assert.equal(getPinnedCodexRuntime('darwin', 'arm64').member, 'codex-aarch64-apple-darwin');
+  assert.equal(getPinnedCodexRuntime('darwin', 'arm64').archiveBytes, 79829356);
+  assert.equal(getPinnedCodexRuntime('darwin', 'x64').member, 'codex-x86_64-apple-darwin');
+  assert.equal(getPinnedCodexRuntime('darwin', 'x64').archiveBytes, 90036798);
+  for (const [key, pin] of Object.entries(PINNED_CODEX_RUNTIMES)) {
+    assert.equal(getPinnedCodexRuntime(pin.platform, pin.arch), pin);
+    assert.equal(key, `${pin.platform}-${pin.arch}`);
+    assert.equal(pin.version, '0.134.0');
+    assert.equal(pin.url, `https://github.com/openai/codex/releases/download/rust-v${pin.version}/${pin.member}.tar.gz`);
+    assert(Object.isFrozen(pin));
+  }
+  assert(Object.isFrozen(PINNED_CODEX_RUNTIMES));
+  for (const [platform, arch] of [['linux','x64'], ['win32','arm64'], ['darwin','ia32'], ['darwin','x64;sh']]) {
+    assert.equal(getPinnedCodexRuntime(platform, arch), null);
+  }
+});
+for (const arch of ['arm64', 'x64']) {
+  test(`macOS ${arch} default selects its own official component without downloading at startup`, async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'orb-mac-platform-'));
+    t.after(() => fs.rm(root, {recursive:true, force:true}));
+    const network = fakeNetwork();
+    const runtime = createCodexRuntime({userDataDir:root, request:network.request, platform:'darwin', arch});
+    const pin = getPinnedCodexRuntime('darwin', arch);
+    assert.equal(runtime.downloadBytes, pin.archiveBytes);
+    assert.equal(await runtime.getVerifiedExecutable(), null);
+    assert.equal(network.calls.length, 0);
+    assert.deepEqual(await fs.readdir(root), []);
+  });
+  test(`macOS ${arch} extracts its exact single native member with private executable permissions`, {skip:process.platform === 'win32'}, async t => {
+    const pin = getPinnedCodexRuntime('darwin', arch);
+    const archive = gzipSync(tar(EXE, {name:pin.member, posix:true}));
+    const s = await setup(t, {platform:'darwin', arch}, fixture(archive, EXE, pin), fakeNetwork({body:archive, parts:17}));
+    assert.equal(await s.runtime.ensureReady(), s.executable);
+    assert.equal(path.basename(s.executable), 'codex');
+    assert.equal((await fs.stat(s.executable)).mode & 0o777, 0o700);
+    assert.equal(await s.runtime.getVerifiedExecutable(), s.executable);
+    assert.equal(await s.runtime.ensureReady(), s.executable);
+    assert.equal(s.calls.length, 1);
+    assert.deepEqual(await fs.readdir(s.directory), ['codex']);
+  });
+}
+test('macOS executable permissions are verified and repaired only after explicit connect', {skip:process.platform === 'win32'}, async t => {
+  const pin = getPinnedCodexRuntime('darwin', 'arm64');
+  const archive = gzipSync(tar(EXE, {name:pin.member, posix:true}));
+  const s = await setup(t, {platform:'darwin', arch:'arm64'}, fixture(archive, EXE, pin), fakeNetwork({body:archive}));
+  await s.runtime.ensureReady();
+  await fs.chmod(s.executable, 0o600);
+  assert.equal(await s.runtime.getVerifiedExecutable(), null);
+  assert.equal(s.calls.length, 1);
+  assert.equal((await fs.stat(s.executable)).mode & 0o777, 0o600);
+  await s.runtime.ensureReady();
+  assert.equal((await fs.stat(s.executable)).mode & 0o777, 0o700);
+  assert.equal(s.calls.length, 2);
+});
+test('macOS architecture mismatch is rejected before network and file access', async t => {
+  const s = await setup(t, {platform:'darwin', arch:'x64'}, {...fixture(), ...getPinnedCodexRuntime('darwin', 'arm64')});
+  await assert.rejects(s.runtime.ensureReady(), code('unsupported'));
+  await assert.rejects(s.runtime.getVerifiedExecutable(), code('unsupported'));
+  assert.equal(s.calls.length, 0);
+  assert.deepEqual(await fs.readdir(s.root), []);
+});
+test('macOS cancellation after download never leaves an executable or partial file', async t => {
+  const pin = getPinnedCodexRuntime('darwin', 'arm64');
+  const archive = gzipSync(tar(EXE, {name:pin.member, posix:true}));
+  const s = await setup(t, {platform:'darwin', arch:'arm64'}, fixture(archive, EXE, pin), fakeNetwork({body:archive}));
+  const controller = new AbortController();
+  await assert.rejects(s.runtime.ensureReady({signal:controller.signal, onProgress:state => {
+    if (state.phase === 'verifying') controller.abort();
+  }}), code('cancelled'));
+  assert.equal(await s.runtime.getVerifiedExecutable(), null);
+  await noPartials(s.directory);
 });
 test('construction and missing-cache probes cause no download or directory creation', async t => {
   const s = await setup(t);

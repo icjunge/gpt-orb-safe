@@ -47,6 +47,22 @@ test('hover switches only the native hit region and never changes the 56 DIP hos
   assert.deepEqual(controller.compactPosition(),{x:400,y:300});
 });
 
+test('Mac hover and stationary press preserve the alpha host without unsupported shape calls',()=>{
+  const {win,display,calls,controller}=host({platform:'darwin',bounds:hostBounds({x:-900,y:40})});
+  display.workArea={x:-1440,y:25,width:1440,height:875};display.scaleFactor=2;
+  const initial=win.getBounds();
+  for(let i=0;i<20;i++){
+    controller.request({expanded:true});controller.beginDrag();
+    controller.request({expanded:false});controller.endDrag();
+    assert.deepEqual(win.getBounds(),initial);
+  }
+  assert.equal(calls.bounds.length,0);assert.equal(calls.shapes.length,0);
+  controller.beginDrag();controller.moveDrag({x:-600,y:50});controller.endDrag({position:{x:-600,y:50}});
+  assert.deepEqual(controller.compactPosition(),{x:-596,y:54});
+  assert.deepEqual(win.getBounds(),{x:-600,y:50,width:HOST_SIZE,height:HOST_SIZE});
+  assert.equal(calls.shapes.length,0);
+});
+
 test('all edge hover and stationary press cycles keep the original visible anchor including negative displays',()=>{
   for(const original of cornerPositions){
     const {win,calls,controller}=host({bounds:hostBounds(original)}),initial=win.getBounds();

@@ -85,7 +85,9 @@ async function discoverCodex(options = {}) {
 
   async function executable(input, root = null) {
     const file = await canonical(input);
-    if (!file || (root && !inside(root, file)) || same(p.basename(file)) !== filename) return null;
+    const nativeName = file && (same(p.basename(file)) === filename || (platform === 'darwin' &&
+      p.basename(input) === filename && p.basename(file) === `codex-${target}`));
+    if (!file || (root && !inside(root, file)) || !nativeName) return null;
     const result = await read(file, 64);
     if (!result || result.bytes.length < 4) return null;
     const { bytes, stat } = result;
@@ -109,6 +111,13 @@ async function discoverCodex(options = {}) {
 
   const entries = environment('PATH').slice(0, 32768).split(windows ? ';' : ':')
     .slice(0, 128).filter(value => safePath(value, windows));
+  // Finder-launched apps do not inherit shell startup files. Probe only these
+  // bounded, conventional native install locations; never execute a login shell.
+  if(platform === 'darwin'){
+    entries.push('/opt/homebrew/bin','/usr/local/bin');
+    const home=environment('HOME');
+    if(safePath(home,false))entries.push(p.join(home,'.local','bin'));
+  }
   const packageRoots = [];
   const addPackage = prefix => {
     if (safePath(prefix, windows)) packageRoots.push(p.join(prefix, 'node_modules', '@openai', 'codex'));

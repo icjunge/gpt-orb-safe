@@ -64,6 +64,107 @@ function verifyEnvelope(body, config) {
   base64(p.sha512, 64);
   return Object.freeze({ ...p });
 }
+// Mac has an intentionally separate schema boundary. Adding it must not allow a
+// DMG (or another architecture) through the existing Windows updater verifier.
+function verifyMacEnvelope(body, config, arch) {
+  if (arch !== 'arm64' && arch !== 'x64') fail('ARCH');
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  if (!bytes.length || bytes.length > MAX_ENVELOPE) fail('MANIFEST_SIZE');
+  const envelope = parseUtf8(bytes);
+  if (!exactKeys(envelope, ['payload', 'signature'])) fail('MANIFEST');
+  const payloadBytes = base64(envelope.payload), signature = base64(envelope.signature, 64);
+  if (!crypto.verify(null, payloadBytes, config.key, signature)) fail('SIGNATURE');
+  const p = parseUtf8(payloadBytes);
+  if (!exactKeys(p, ['schema', 'version', 'tag', 'platform', 'arch', 'file', 'size', 'sha256', 'sha512', 'publishedAt']) ||
+      p.schema !== 1 || typeof p.version !== 'string' || !VERSION.test(p.version) || p.tag !== `v${p.version}` ||
+      p.platform !== 'darwin' || p.arch !== arch || p.file !== `GPT-Orb-Setup-${p.version}-${arch}.dmg` ||
+      !Number.isSafeInteger(p.size) || p.size < 1 || p.size > MAX_INSTALLER ||
+      typeof p.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(p.sha256) ||
+      typeof p.publishedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(p.publishedAt) ||
+      !Number.isFinite(Date.parse(p.publishedAt))) fail('MANIFEST');
+  base64(p.sha512, 64);
+  return Object.freeze({ ...p });
+}
+function allowedMacManifestUrl(value, repository, arch, allowAssetHost = false) {
+  if (typeof value !== 'string' || !REPOSITORY.test(repository) || !['arm64', 'x64'].includes(arch)) return false;
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  const authority = value.match(/^https:\/\/([^/?#]+)/)?.[1];
+  if (!authority || authority.includes(':') || authority.includes('@') || /[\s\\]/.test(value) ||
+      url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) return false;
+  if (allowAssetHost && ['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname)) return true;
+  if (url.hostname !== 'github.com' || url.search) return false;
+  const prefix = `/${repository}/releases/`, file = `orb-update-mac-${arch}.json`;
+  if (!url.pathname.startsWith(prefix)) return false;
+  const tail = url.pathname.slice(prefix.length);
+  if (tail === `latest/download/${file}`) return true;
+  const parts = tail.split('/');
+  return parts.length === 3 && parts[0] === 'download' && parts[2] === file &&
+    parts[1].startsWith('v') && VERSION.test(parts[1].slice(1));
+}
+async function fetchMacManifest(url, { repository, arch, signal, request = https.get } = {}) {
+  // Unlike the browser opening action, this fetch follows redirects itself and
+  // validates every target before making a request. No browser/account cookies.
+  const follow = (value, redirects) => new Promise((resolve, reject) => {
+    if (redirects > 5 || !allowedMacManifestUrl(value, repository, arch, redirects > 0))
+      return reject(new UpdateSecurityError('URL'));
+    if (signal?.aborted) return reject(new UpdateSecurityError('CANCELLED'));
+    let requestObject, responseObject, timer, settled = false;
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); };
+    const done = (err, data) => {
+      if (settled) return;
+      settled = true; cleanup();
+      err ? reject(err) : resolve(data);
+    };
+    const abort = () => {
+      done(new UpdateSecurityError('CANCELLED'));
+      responseObject?.destroy(); requestObject?.destroy();
+    };
+    try {
+      requestObject = request(value, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache', 'User-Agent': 'GPT-Usage-Orb-Updater' } }, response => {
+        responseObject = response;
+        response.on('error', () => done(new UpdateSecurityError('NETWORK')));
+        response.on('aborted', () => done(new UpdateSecurityError('NETWORK')));
+        if (settled) { response.destroy(); return; }
+        if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
+          const location = response.headers.location;
+          response.resume();
+          if (typeof location !== 'string') return done(new UpdateSecurityError('URL'));
+          let next;
+          try { next = new URL(location, value).href; } catch { return done(new UpdateSecurityError('URL')); }
+          settled = true; cleanup();
+          follow(next, redirects + 1).then(resolve, reject);
+          return;
+        }
+        if (response.statusCode !== 200) { response.resume(); return done(new UpdateSecurityError('NETWORK')); }
+        const length = response.headers['content-length'];
+        if (length !== undefined && (typeof length !== 'string' || !/^\d+$/.test(length) || Number(length) > MAX_ENVELOPE)) {
+          done(new UpdateSecurityError('MANIFEST_SIZE')); response.destroy(); return;
+        }
+        const encoding = response.headers['content-encoding'];
+        if (encoding && encoding !== 'identity') { done(new UpdateSecurityError('MANIFEST')); response.destroy(); return; }
+        const chunks = []; let total = 0;
+        response.on('data', chunk => {
+          if (settled) return;
+          total += chunk.length;
+          if (total > MAX_ENVELOPE) { done(new UpdateSecurityError('MANIFEST_SIZE')); response.destroy(); }
+          else chunks.push(chunk);
+        });
+        response.on('end', () => done(total === 0 || (length !== undefined && total !== Number(length))
+          ? new UpdateSecurityError('MANIFEST_SIZE') : null, Buffer.concat(chunks)));
+      });
+      requestObject.on('error', () => done(new UpdateSecurityError('NETWORK')));
+      if (settled) return;
+      timer = setTimeout(() => {
+        done(new UpdateSecurityError('TIMEOUT')); responseObject?.destroy(); requestObject?.destroy();
+      }, 20000);
+      timer.unref?.();
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    } catch { done(new UpdateSecurityError('NETWORK')); }
+  });
+  return follow(url, 0);
+}
 function releaseBase(repository, payload) { return `https://github.com/${repository}/releases/download/${payload.tag}/`; }
 function allowedUpdateUrl(value, repository, expectedPath) {
   let url;
@@ -164,4 +265,5 @@ async function verifyInstaller(filename, p) {
   return true;
 }
 module.exports = { MAX_ENVELOPE, MAX_INSTALLER, UpdateSecurityError, compareVersions, validateConfig, verifyEnvelope,
-  releaseBase, allowedUpdateUrl, validateUpdateInfo, fetchManifest, verifyInstaller };
+  releaseBase, allowedUpdateUrl, validateUpdateInfo, fetchManifest, verifyInstaller,
+  verifyMacEnvelope, allowedMacManifestUrl, fetchMacManifest };

@@ -1,4 +1,4 @@
-name: Windows release
+name: Desktop release
 on:
   push:
     tags: ['v*']
@@ -30,15 +30,62 @@ jobs:
       - run: python scripts/package_windows.py --source-only --extension-zip --output dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-assets
+          name: release-assets-windows
           if-no-files-found: error
           retention-days: 14
           path: |
             dist/GPT-Orb-Setup-*-x64.exe
             dist/GPT-Orb-*-Source.zip
             dist/GPT-Orb-*-Browser-Extension.zip
+  build-mac:
+    if: github.repository == 'icjunge/gpt-orb-safe' && startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+            app: dist/mac-arm64/GPT Usage Orb Safe.app
+          - os: macos-15-intel
+            arch: x64
+            app: dist/mac/GPT Usage Orb Safe.app
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/validate-release.cjs
+      - run: npm test
+      - name: Build an ad-hoc signed macOS disk image
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify native app startup and isolated Codex component
+        timeout-minutes: 10
+        run: node test/mac-native-smoke.cjs --app "${{ matrix.app }}"
+      - name: Keep native macOS diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-release-diagnostic-${{ matrix.arch }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: dist/mac-native-diagnostic-${{ matrix.arch }}/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets-mac-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: dist/GPT-Orb-Setup-*-${{ matrix.arch }}.dmg
   publish:
-    needs: build
+    needs: [build, build-mac]
     runs-on: ubuntu-latest
     environment: release
     concurrency:
@@ -56,13 +103,15 @@ jobs:
           node-version: '24'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
           path: dist
       - name: Verify pinned public key and sign actual installer
         run: |
           node scripts/validate-release.cjs
           node scripts/configure-release.cjs
           node scripts/sign-release.cjs dist
+          node scripts/sign-mac-release.cjs dist
         env:
           ORB_UPDATE_PRIVATE_KEY: ${{ secrets.ORB_UPDATE_PRIVATE_KEY }}
       - name: Verify uploaded assets and publish the approved signed update
