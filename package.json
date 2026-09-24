@@ -1,7 +1,7 @@
 {
   "name": "gpt-usage-orb-safe",
   "productName": "GPT Usage Orb Safe",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "A local desktop usage orb with one-click official Codex login, local credential storage and automatic quota refresh.",
   "main": "src/main.cjs",
   "author": "GPT Usage Orb contributors",
@@ -10,6 +10,9 @@
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
     "build:win": "electron-builder --win nsis --x64 --publish never",
+    "build:mac": "electron-builder --mac dmg --arm64 --x64 --publish never",
+    "build:mac:arm64": "electron-builder --mac dmg --arm64 --publish never",
+    "build:mac:x64": "electron-builder --mac dmg --x64 --publish never",
     "release:sign": "node scripts/sign-release.cjs",
     "release:configure": "node scripts/configure-release.cjs",
     "release:key": "node scripts/generate-signing-key.cjs",

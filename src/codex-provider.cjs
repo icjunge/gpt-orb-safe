@@ -274,7 +274,7 @@ async function readCodexUsage({executable, cwd, codexHome, signal, spawnImpl = s
   let identity = null;
   let accountIdentity = null;
   try {
-    const initialized = await channel.request('initialize', {clientInfo:{name:'gpt_usage_orb_safe', title:'GPT Usage Orb Safe', version:'2.6.0'}});
+    const initialized = await channel.request('initialize', {clientInfo:{name:'gpt_usage_orb_safe', title:'GPT Usage Orb Safe', version:'2.7.0'}});
     channel.assertOpen();
     if (!record(initialized)) throw new CodexReadError('protocol');
     channel.initialized();
