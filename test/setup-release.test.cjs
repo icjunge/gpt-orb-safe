@@ -9,7 +9,9 @@ const {setupRelease,parseOrigin}=require('../scripts/setup-release.cjs');
 const REPO='icjunge/gpt-orb-safe',HEAD='a'.repeat(40),USER={id:123,login:'icjunge',type:'User'};
 function environment(){return {name:'release',deployment_branch_policy:{protected_branches:false,custom_branch_policies:true},protection_rules:[{type:'required_reviewers',prevent_self_review:false,reviewers:[{type:'User',reviewer:USER}]},{type:'branch_policy'}]};}
 function fixture(t,changes={}) {
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'orb-setup-test-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ // macOS exposes its temp directory through /var -> /private/var. Resolve
+ // only the fixture root; intentional links inside each fixture stay intact.
+ const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'orb-setup-test-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const project=path.join(root,'project'),home=path.join(root,'home');fs.mkdirSync(project);fs.mkdirSync(home);
  fs.writeFileSync(path.join(project,'package.json'),JSON.stringify({version:'2.1.0'}));
  const config={schema:1,repository:null,publicKey:null,channel:'stable'};fs.writeFileSync(path.join(project,'update-config.json'),JSON.stringify(config,null,2)+'\n');

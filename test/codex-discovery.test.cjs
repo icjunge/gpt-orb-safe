@@ -197,7 +197,7 @@ test('unsupported architectures return unavailable without file access', async (
 });
 
 test('Linux development accepts an executable native file and rejects script shims and non-executable files', { skip: process.platform === 'win32' }, async t => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'orb-codex-discovery-'));
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'orb-codex-discovery-')));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const executable = path.join(directory, 'codex');
   const options = { platform: 'linux', arch: 'x64', env: { PATH: directory } };
