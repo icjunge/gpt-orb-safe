@@ -2,6 +2,7 @@
 (() => {
   const orb = document.getElementById('orb');
   const value = document.getElementById('orb-value');
+  const liquidLevel = document.getElementById('orb-liquid-level');
   let state = { status: 'starting', bridge: {}, snapshot: null, settings: { usageSource: 'codex-cli' } };
   let dragging = null;
   let pointerWithin = false;
@@ -10,6 +11,7 @@
   let requestedExpanded = false;
   let expandRevision = 0;
   orb.dataset.expanded = 'false';
+  orb.dataset.suspended = String(document.hidden === true);
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const nativeMode = () => (state.usageSource || state.settings?.usageSource || (state.codex || state.snapshot?.source === 'codex-cli' ? 'codex-cli' : 'browser')) === 'codex-cli';
   const snapshot = () => state.snapshot && ((state.snapshot.source === 'codex-cli') === nativeMode()) ? state.snapshot : null;
@@ -24,6 +26,29 @@
     if (seconds >= 60) return `${Math.ceil(seconds / 60)}分`;
     return '不足1分';
   }
+  function renderLiquid(remaining) {
+    const known = finite(remaining) && remaining >= 0 && remaining <= 100;
+    orb.dataset.fill = !known ? 'unknown' : remaining === 0 ? 'empty' : remaining === 100 ? 'full' : 'partial';
+    let level = 104;
+    if (known && remaining > 0) {
+      if (remaining === 100) level = -4;
+      else {
+        // A circular vessel has less area near its poles. Invert the circular
+        // segment area so the filled *area*, not just its height, tracks quota.
+        const fraction = remaining / 100;
+        let lower = -1, upper = 1;
+        for (let iteration = 0; iteration < 24; iteration++) {
+          const mid = (lower + upper) / 2;
+          const area = (Math.acos(mid) - mid * Math.sqrt(1 - mid * mid)) / Math.PI;
+          if (area > fraction) lower = mid; else upper = mid;
+        }
+        level = 50 + 43 * (lower + upper) / 2;
+      }
+    }
+    // SVG presentation attributes are compatible with style-src 'self'. No
+    // inline style, HTML interpolation, per-frame script or new IPC is needed.
+    liquidLevel.setAttribute('transform', `translate(0 ${level.toFixed(4)})`);
+  }
   function render() {
     for (const [name, key] of [['reduced-transparency', 'reducedTransparency'], ['high-contrast', 'highContrast']]) {
       document.body.classList.toggle(name, state.appearance?.[key] === true);
@@ -32,7 +57,7 @@
     const native = nativeMode();
     const current = snapshot();
     const threshold = finite(state.staleAfterMs) && state.staleAfterMs > 0 ? state.staleAfterMs : 180000;
-    const stale = !!current && Date.now() - current.capturedAt > threshold;
+    const stale = !!current && (!finite(current.capturedAt) || Date.now() - current.capturedAt > threshold);
     const manual = current?.source === 'manual-page';
     const failed = !!state.error || (native && ['error', 'not-found', 'needs-login', 'unsupported'].includes(state.codex?.state));
     const stopped = native && !state.codex?.enabled;
@@ -40,6 +65,7 @@
     let description;
     orb.dataset.status = state.status || 'starting';
     orb.dataset.stale = String(stale || failed || manual || stopped || unconfirmed);
+    renderLiquid(tightest?.remaining);
     if (tightest) {
       const remaining = tightest.remaining;
       value.textContent = `${Math.round(remaining)}%`;
@@ -98,7 +124,11 @@
   orb.addEventListener('blur', () => { keyboardFocus = false; settleHover(); });
   async function finishDrag(pointerId, cancelled) {
     const gesture = dragging;
-    if (!gesture || gesture.ending || pointerId !== gesture.pointerId) return;
+    if (!gesture || pointerId !== gesture.pointerId) return;
+    // Hiding can revoke a click while its native end reply is still in flight.
+    // Record cancellation before the duplicate-end guard, without ending twice.
+    gesture.cancelled ||= cancelled;
+    if (gesture.ending) return;
     gesture.ending = true;
     try { if (orb.hasPointerCapture(pointerId)) orb.releasePointerCapture(pointerId); } catch {}
     // The main process owns both the drag threshold and DIP cursor coordinates.
@@ -112,9 +142,9 @@
     if (result?.ok === true && typeof result.expanded === 'boolean') {
       requestedExpanded = result.expanded;
       orb.dataset.expanded = String(result.expanded);
-    }
+    } else requestedExpanded = null;
     dragging = null;
-    if (!cancelled && result?.ok === true && result.moved === false) action('togglePanel');
+    if (!gesture.cancelled && document.hidden !== true && result?.ok === true && result.moved === false) action('togglePanel');
     settleHover();
   }
   orb.addEventListener('pointerdown', event => {
@@ -123,7 +153,7 @@
     // Tab focus and keyboard activation remain available through their handlers.
     event.preventDefault();
     clearCollapse();
-    const gesture = dragging = { pointerId: event.pointerId, ending: false };
+    const gesture = dragging = { pointerId: event.pointerId, ending: false, cancelled: false };
     try { orb.setPointerCapture(event.pointerId); } catch { dragging = null; settleHover(); return; }
     action('dragStart').then(result => {
       if (dragging === gesture && !gesture.ending && result?.ok !== true) finishDrag(event.pointerId, true);
@@ -137,7 +167,11 @@
   });
   orb.addEventListener('pointerup', event => finishDrag(event.pointerId, false));
   orb.addEventListener('pointercancel', event => finishDrag(event.pointerId, true));
-  orb.addEventListener('lostpointercapture', event => finishDrag(event.pointerId, true));
+  orb.addEventListener('lostpointercapture', event => {
+    // Our normal pointer-up release also fires lostcapture. It must not revoke
+    // that click; explicit cancellation or hiding can still revoke an end reply.
+    if (!dragging?.ending) finishDrag(event.pointerId, true);
+  });
   orb.addEventListener('keydown', event => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -145,6 +179,16 @@
       settleHover();
       if (!event.repeat) action('togglePanel');
     }
+  });
+  document.addEventListener('visibilitychange', () => {
+    const hidden = document.hidden === true;
+    orb.dataset.suspended = String(hidden);
+    if (!hidden) return;
+    pointerWithin = false;
+    keyboardFocus = false;
+    clearCollapse();
+    if (dragging) finishDrag(dragging.pointerId, true);
+    else expand(false);
   });
   let receivedLiveState = false;
   window.orb?.onState(next => { receivedLiveState = true; state = next; render(); });

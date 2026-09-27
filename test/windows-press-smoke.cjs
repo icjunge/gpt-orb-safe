@@ -42,16 +42,16 @@ if(!process.versions.electron){
     }finally{fs.rmSync(temporary,{recursive:true,force:true,maxRetries:3,retryDelay:200});}
   }
 }else{
-  const {app,BrowserWindow,ipcMain,screen,session}=require('electron');
+  const {app,BrowserWindow,ipcMain,screen,session,Menu}=require('electron');
   const {HOST_SIZE,HOST_INSET,COMPACT_SIZE,EXPANDED_SIZE}=require('../src/orb-window.cjs');
-  const report={schema:1,status:'running',scope:'Real Windows mouse events through production main/preload/orb.js',
+  const report={schema:1,status:'running',scope:'Production tray menu callbacks plus real Windows mouse events through production main/preload/orb.js',
     scaleCoverage:'Current native Windows display scale only; no forced device scale.',
-    stationary:[],drag:null,actions:[],events:[],geometryEvents:[],samples:[],networkBlocked:0};
+    visibility:[],stationary:[],drag:null,actions:[],events:[],geometryEvents:[],samples:[],networkBlocked:0};
   const profile=process.env.GPT_ORB_PRESS_PROFILE;
   assert(profile,'Missing isolated profile.');fs.mkdirSync(profile,{recursive:true});app.setPath('userData',profile);
   const preferences=path.join(profile,'preferences.json');
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-  let orb,helper,stationaryBounds=null,finished=false;
+  let orb,helper,productionTrayMenu,stationaryBounds=null,finished=false;
   const deadline=setTimeout(()=>void finish(new Error('Real mouse test exceeded 60 seconds.')),60000);
 
   async function finish(error){
@@ -156,6 +156,12 @@ if(!process.versions.electron){
       }
       return result;
     });
+    // Keep the actual menu objects while forwarding construction unchanged. We
+    // invoke their real callbacks; this does not emulate a physical tray click.
+    const buildMenu=Menu.buildFromTemplate.bind(Menu);
+    Menu.buildFromTemplate=template=>{
+      const menu=buildMenu(template);if(menu.getMenuItemById('toggle-orb'))productionTrayMenu=menu;return menu;
+    };
     require('../src/main.cjs');
     orb=await until(()=>BrowserWindow.getAllWindows().find(window=>window.webContents.getURL().endsWith('/orb.html')&&window.isVisible()),'production orb loaded');
     const panel=BrowserWindow.getAllWindows().find(window=>window!==orb);
@@ -172,6 +178,26 @@ if(!process.versions.electron){
     const away={x:area.x+80,y:area.y+70};await helper.move(away);await expanded(false);
     const baseline=await sample('initial-compact');
     assert.equal(baseline.dip.width,HOST_SIZE);assert.equal(baseline.dip.height,HOST_SIZE);
+    for(let iteration=1;iteration<=3;iteration++){
+      assert(productionTrayMenu,'Production tray menu was not created.');
+      let command=productionTrayMenu.getMenuItemById('toggle-orb');
+      assert.equal(command.label,'隐藏悬浮球');command.click();
+      await until(()=>!orb.isVisible()&&!panel.isVisible(),'tray command hides both windows');
+      await until(()=>orb.webContents.executeJavaScript('document.hidden'),'renderer observes hidden window');
+      const hidden=await helper.query('sample');assert.equal(hidden.visible,false,'native HWND must be hidden');
+      command=productionTrayMenu.getMenuItemById('toggle-orb');
+      assert.equal(command.label,'显示悬浮球');command.click();
+      await until(()=>orb.isVisible()&&!orb.isMinimized(),'tray command restores the orb');
+      await until(()=>orb.webContents.executeJavaScript('!document.hidden'),'renderer resumes after restore');
+      await helper.move({x:baseline.dip.x+HOST_SIZE/2,y:baseline.dip.y+HOST_SIZE/2});await expanded(true);
+      const restored=await until(async()=>{const native=await helper.query('sample');return native.visible&&!native.minimized&&native.hitTarget?native:false;},'restored orb is native mouse target');
+      const frame=await orb.webContents.capturePage(),bitmap=frame.toBitmap();
+      let painted=0;for(let index=3;index<bitmap.length;index+=4)if(bitmap[index]>0)painted++;
+      assert(painted>20,'Restored alpha window must contain a painted orb.');
+      equalBounds(orb.getBounds(),baseline.dip,'Tray restore changed the fixed host geometry.');
+      report.visibility.push({iteration,hiddenNative:true,restoredNative:restored.visible,hitTarget:restored.hitTarget,paintedPixels:painted});
+      await helper.move(away);await expanded(false);
+    }
     stationaryBounds=baseline.dip;
     for(const event of ['move','resize'])orb.on(event,()=>{
       if(finished)return;

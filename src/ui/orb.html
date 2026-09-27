@@ -10,6 +10,38 @@
 </head>
 <body>
   <button id="orb" class="orb" aria-label="打开 GPT 用量面板" title="点击查看用量 · 拖动移动">
+    <svg class="orb-optics" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+      <defs>
+        <clipPath id="orb-liquid-clip"><circle cx="50" cy="50" r="43"/></clipPath>
+        <radialGradient id="orb-lens-light" cx="32%" cy="9%" r="87%">
+          <stop offset="0" stop-color="#ffffff" stop-opacity=".21"/>
+          <stop offset=".44" stop-color="#eef6ff" stop-opacity=".025"/>
+          <stop offset=".8" stop-color="#ffffff" stop-opacity="0"/>
+          <stop offset="1" stop-color="#10233c" stop-opacity=".13"/>
+        </radialGradient>
+        <linearGradient id="orb-water-front" x1="0" y1="0" x2="0" y2="90" gradientUnits="userSpaceOnUse">
+          <stop class="water-light" offset="0" stop-opacity=".3"/>
+          <stop class="water-deep" offset="1" stop-opacity=".12"/>
+        </linearGradient>
+        <linearGradient id="orb-water-back" x1="0" y1="0" x2="0" y2="90" gradientUnits="userSpaceOnUse">
+          <stop class="water-light" offset="0" stop-opacity=".13"/>
+          <stop class="water-deep" offset="1" stop-opacity=".2"/>
+        </linearGradient>
+      </defs>
+      <!-- These translucent optics do not sample or blur other desktop windows. -->
+      <circle class="orb-lens" cx="50" cy="50" r="48" fill="url(#orb-lens-light)"/>
+      <g class="orb-water" clip-path="url(#orb-liquid-clip)">
+        <g id="orb-liquid-level" transform="translate(0 104)">
+          <g class="orb-wave orb-wave-back">
+            <path d="M-100 0 C-75 -6 -25 6 0 0 S75 6 100 0 S175 6 200 0 S275 6 300 0 V200 H-100 Z" fill="url(#orb-water-back)"/>
+          </g>
+          <g class="orb-wave orb-wave-front">
+            <path d="M-100 0 C-75 -3.5 -25 3.5 0 0 S75 3.5 100 0 S175 3.5 200 0 S275 3.5 300 0 V200 H-100 Z" fill="url(#orb-water-front)"/>
+            <path class="orb-waterline" d="M-100 0 C-75 -3.5 -25 3.5 0 0 S75 3.5 100 0 S175 3.5 200 0 S275 3.5 300 0"/>
+          </g>
+        </g>
+      </g>
+    </svg>
     <span id="orb-value" class="orb-value">—</span>
   </button>
   <script src="orb.js"></script>

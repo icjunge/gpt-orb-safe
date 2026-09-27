@@ -43,10 +43,10 @@ async function launch({preferences, managedLogin, managedStop, platform='win32',
   });
   class Window extends EventEmitter {
     constructor(options) {
-      super(); this.options=options; this.visible=false; this.bounds={x:0,y:0,...options}; this.sent=[];
+      super(); this.options=options; this.visible=false; this.minimized=false; this.bounds={x:0,y:0,...options}; this.sent=[];
       this.webContents=new EventEmitter();
       Object.assign(this.webContents, {
-        mainFrame:{url:''}, isDestroyed:()=>false,
+        mainFrame:{url:''}, isDestroyed:()=>false,invalidate:()=>{this.invalidations=(this.invalidations||0)+1;},
         setWindowOpenHandler(){},
         session:{setPermissionRequestHandler(){},setPermissionCheckHandler(){}},
         send:(channel, value) => { this.lastSent={channel,value:clone(value)}; this.sent.push(this.lastSent); }
@@ -61,7 +61,10 @@ async function launch({preferences, managedLogin, managedStop, platform='win32',
     setVibrancy(value){this.vibrancy=value;}
     setVisibleOnAllWorkspaces(value,options){this.workspaces={value,options};}
     setShape(value){(this.shapes||=[]).push(clone(value));}
-    showInactive(){this.visible=true;} show(){this.visible=true;} hide(){this.visible=false;}
+    showInactive(){this.inactiveShows=(this.inactiveShows||0)+1;this.visible=true;}
+    show(){this.normalShows=(this.normalShows||0)+1;this.visible=true;} hide(){this.visible=false;}
+    isMinimized(){return this.minimized;} restore(){this.restores=(this.restores||0)+1;this.minimized=false;this.visible=true;}
+    moveTop(){this.raised=(this.raised||0)+1;}
     isVisible(){return this.visible;}
     getBounds(){return{...this.bounds};} setBounds(bounds){const before=this.bounds;this.bounds={...this.bounds,...bounds};this.boundUpdates=(this.boundUpdates||0)+1;
       if(before.x!==this.bounds.x||before.y!==this.bounds.y)this.emit('move');
@@ -204,6 +207,65 @@ test('orb remains a small transparent alpha circle while panel Acrylic and acces
   await h.action('setSettings',{opacity:.6});
   assert.equal(orb.opacities.at(-1),.6,'the alpha host retains the existing opacity setting');
   assert.deepEqual([...h.handlers.keys()],['orb:state','orb:action']);
+});
+
+test('Windows tray repeatedly restores a hidden orb through normal show and refreshes its paint and hit region',async()=>{
+  const h=await launch({preferences:{position:{x:400,y:300}}}),[orb,panel]=h.windows;
+  const toggle=()=>h.calls.tray.menu.items.find(item=>item.id==='toggle-orb');
+  orb.emit('ready-to-show');
+  assert.equal(orb.inactiveShows,1,'initial display must not activate the orb');
+  const initial=clone(orb.bounds);
+  for(let cycle=1;cycle<=4;cycle++){
+    panel.show();assert.equal(toggle().label,'隐藏悬浮球');toggle().click();
+    assert.equal(orb.isVisible(),false);assert.equal(panel.isVisible(),false);
+    assert.equal(toggle().label,'显示悬浮球');
+    const shapes=orb.shapes.length,paint=orb.invalidations;
+    toggle().click();
+    assert.equal(orb.isVisible(),true);assert.equal(panel.isVisible(),false);
+    assert.equal(orb.normalShows,cycle);assert.equal(orb.inactiveShows,1);
+    assert.ok(orb.shapes.length>shapes);assert.ok(orb.invalidations>paint);
+    assert.deepEqual(clone(orb.bounds),initial,'hide/show must not move or resize the orb');
+  }
+});
+
+test('tray left click restores a hidden or minimized orb even if the usage panel was still visible',async()=>{
+  const h=await launch(),[orb,panel]=h.windows;
+  panel.show();h.calls.tray.emit('click');
+  assert.equal(orb.isVisible(),true);assert.equal(panel.isVisible(),true);
+  orb.minimized=true;h.calls.tray.emit('click');
+  assert.equal(orb.isMinimized(),false);assert.equal(orb.restores,1);
+  assert.equal(panel.isVisible(),true,'the first click restores instead of hiding a visible panel');
+  h.calls.tray.emit('click');assert.equal(panel.isVisible(),false);
+});
+
+test('restore brings the compact orb onto a remaining screen without changing its host size',async()=>{
+  const h=await launch({preferences:{position:{x:1800,y:950}}}),[orb]=h.windows;
+  orb.emit('ready-to-show');h.calls.tray.menu.items.find(item=>item.id==='toggle-orb').click();
+  const workArea={x:0,y:0,width:1024,height:768};
+  h.screen.getDisplayMatching=()=>({workArea});
+  h.calls.tray.menu.items.find(item=>item.id==='toggle-orb').click();
+  assert.equal(orb.isVisible(),true);
+  assert.deepEqual({x:orb.bounds.x,y:orb.bounds.y,width:orb.bounds.width,height:orb.bounds.height},{x:972,y:716,width:56,height:56});
+});
+
+test('hiding during a press ends the old gesture without moving toward the tray or reviving it on ready-to-show',async()=>{
+  const h=await launch({preferences:{position:{x:400,y:300}}}),[orb]=h.windows;
+  const event={sender:orb.webContents,senderFrame:orb.webContents.mainFrame};
+  h.calls.tray.emit('click');const initial=clone(orb.bounds);
+  h.screen.getCursorScreenPoint=()=>({x:424,y:324});await h.action('dragStart',undefined,event);
+  h.screen.getCursorScreenPoint=()=>({x:1800,y:1050});
+  h.calls.tray.menu.items.find(item=>item.id==='toggle-orb').click();
+  orb.emit('ready-to-show');assert.equal(orb.isVisible(),false,'late initial paint must respect a user hide');
+  h.windows[1].emit('ready-to-show');assert.equal(orb.isVisible(),false,'late initial panel paint must also respect a user hide');
+  assert.deepEqual(await h.action('dragEnd',{cancelled:true},event),{ok:false});
+  assert.deepEqual(await h.action('dragStart',undefined,event),{ok:false},'a delayed press cannot start a hidden gesture');
+  assert.deepEqual(await h.action('togglePanel',undefined,event),{ok:false},'a delayed release cannot reopen an explicitly hidden orb');
+  assert.equal(orb.isVisible(),false);
+  assert.deepEqual(clone(orb.bounds),initial);
+  h.calls.tray.menu.items.find(item=>item.id==='toggle-orb').click();
+  assert.deepEqual(await h.action('dragStart',undefined,event),{ok:true},'a new drag must not inherit the hidden press');
+  assert.deepEqual(await h.action('dragEnd',{cancelled:true},event),{ok:true,moved:false,expanded:false});
+  assert.deepEqual(h.saved().position,{x:400,y:300});
 });
 
 test('orb hover accepts only a boolean from its exact main frame and cannot move or resize the panel',async()=>{
