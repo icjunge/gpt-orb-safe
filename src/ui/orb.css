@@ -2,23 +2,41 @@
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;user-select:none}
 body{display:grid;place-items:center}
-.orb{position:relative;display:grid;place-items:center;isolation:isolate;width:48px;height:48px;padding:0;border:1px solid #ffffff70;border-radius:50%;background:rgba(18,22,27,.22);color:#fff;font:inherit;cursor:grab;touch-action:none;outline:none;box-shadow:inset 0 0 0 1px #09101b45,inset 0 3px 4px #ffffff14,inset 0 -3px 5px #08101835}
+.orb{--water-light:#caedfa;--water-deep:#70b9d0;position:relative;display:grid;place-items:center;isolation:isolate;width:48px;height:48px;padding:0;border:1px solid #ffffff40;border-radius:50%;background:rgba(19,25,35,.18);color:#fff;font:inherit;cursor:grab;touch-action:none;outline:none;box-shadow:inset 0 0 0 1px #0b142b2b,inset 0 2px 4px #ffffff14,inset 0 -2px 4px #07132630}
 .orb[data-expanded="true"]{width:56px;height:56px}
 .orb::before,.orb::after{content:"";position:absolute;pointer-events:none;border-radius:inherit}
-/* The rim stays inside the circular surface; the centre and outer corners stay transparent. */
-.orb::before{inset:0;padding:2.5px;background:linear-gradient(145deg,#fffffff0 0%,#ffffff70 20%,#ffffff16 40%,#07101d70 66%,#ffffff75 100%);mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}
-.orb::after{inset:3px;border:1px solid #ffffff30;box-shadow:inset 0 1px 2px #ffffff24,inset 0 -1px 2px #00000030}
+/* A quiet, directional glass bevel. The small chromatic split lives only at the
+   curved edge; it is decorative dispersion, not desktop refraction or capture. */
+.orb::before{z-index:2;inset:0;background:conic-gradient(from -28deg,#ffffff9c 0deg,#ffffffe0 35deg,#ffffff6b 62deg,#ffffff0a 96deg,#b9eefa30 108deg,#83dcefaa 123deg,#bba4facc 136deg,#ffd2b3c2 147deg,#ffffff17 160deg,#0b213b70 178deg,#ffffff38 204deg,#ffffff85 226deg,#a9c2fca8 239deg,#b8e9ec70 247deg,#ffffff0a 266deg,#ffffff79 315deg,#ffffff9c 360deg);mask:radial-gradient(closest-side,#0000 calc(100% - 3.3px),#0002 calc(100% - 2.25px),#0006 calc(100% - 1.25px),#000 calc(100% - .55px),#0000 100%)}
+.orb::after{z-index:2;inset:3px;border:.5px solid #ffffff14;box-shadow:inset 0 1px 1.5px #ffffff14,inset 0 -1px 2px #08162c24}
+.orb-optics{position:absolute;inset:0;width:100%;height:100%;border-radius:inherit;overflow:hidden;pointer-events:none}
+.water-light{stop-color:var(--water-light)}
+.water-deep{stop-color:var(--water-deep)}
+.orb-water{opacity:.9}
+.orb-wave{transform-box:view-box;transform-origin:0 0;animation:water-drift 8s linear infinite}
+.orb-wave-back{animation-duration:11s;animation-direction:reverse}
+.orb-waterline{fill:none;stroke:#f3fbff;stroke-opacity:.43;stroke-width:.7}
+.orb[data-fill="unknown"] .orb-water,.orb[data-fill="empty"] .orb-water{display:none}
+.orb[data-fill="full"] .orb-wave{animation:none}
+.orb[data-fill="full"] .orb-waterline{display:none}
+.orb[data-tone="warning"]{--water-light:#ebdbbf;--water-deep:#c4ad87}
+.orb[data-tone="danger"]{--water-light:#f0cfcb;--water-deep:#cd9294}
+.orb[data-stale="true"] .orb-water{opacity:.4}
+.orb[data-stale="true"] .orb-wave,.orb[data-suspended="true"] .orb-wave{animation-play-state:paused}
+.orb[data-stale="true"] .orb-waterline{stroke-opacity:.2;stroke-dasharray:2 2}
 .orb:active{cursor:grabbing}
 .orb:focus-visible{box-shadow:inset 0 0 0 2px #e6f2ff}
 .orb:focus-visible::after{border-color:#e6f2ff}
-.orb-value{position:relative;z-index:1;color:#fff;font-size:16px;font-weight:500;line-height:1;letter-spacing:-.45px;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #0008;pointer-events:none}
+.orb-value{position:relative;z-index:3;color:#fff;font-size:15.5px;font-weight:500;line-height:1;letter-spacing:-.45px;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #07101db3,0 0 1px #07101d99;pointer-events:none}
 .orb[data-wide-value="true"] .orb-value{font-size:12.5px;letter-spacing:-.55px}
-.orb[data-expanded="true"] .orb-value{font-size:18px}
+.orb[data-expanded="true"] .orb-value{font-size:17.5px}
 .orb[data-expanded="true"][data-wide-value="true"] .orb-value{font-size:14px}
 body.reduced-transparency .orb{background:#171b22}
+body.reduced-transparency .orb-lens{display:none}
 body.high-contrast .orb{background:Canvas;color:CanvasText;border-color:CanvasText;box-shadow:none}
-body.high-contrast .orb::before,body.high-contrast .orb::after{display:none}
+body.high-contrast .orb::before,body.high-contrast .orb::after,body.high-contrast .orb-optics{display:none}
 body.high-contrast .orb-value{color:CanvasText;text-shadow:none}
+@keyframes water-drift{from{transform:translateX(0)}to{transform:translateX(-100px)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
-@media(prefers-reduced-transparency:reduce){.orb{background:#171b22}}
-@media(prefers-contrast:more){.orb{background:Canvas;color:CanvasText;border-color:CanvasText;box-shadow:none}.orb::before,.orb::after{display:none}.orb-value{color:CanvasText;text-shadow:none}}
+@media(prefers-reduced-transparency:reduce){.orb{background:#171b22}.orb-lens{display:none}}
+@media(prefers-contrast:more),(forced-colors:active){.orb{background:Canvas;color:CanvasText;border-color:CanvasText;box-shadow:none}.orb::before,.orb::after,.orb-optics{display:none}.orb-value{color:CanvasText;text-shadow:none}}

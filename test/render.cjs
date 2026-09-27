@@ -521,7 +521,7 @@ app.whenReady().then(async()=>{
   const alphaOrb={...native,appearance:{nativeBackdrop:true,orbNativeBackdrop:false,orbNativeHost:false,orbBackdropStatus:'transparent'}};
   await change(orb,alphaOrb);
   equal(await run(orb,"document.body.classList.contains('native-backdrop')"),false,'panel material status cannot enable an orb native backdrop');
-  equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgba(18, 22, 27, 0.22)','percentage orb has a light transparent fill');
+  equal(await run(orb,"getComputedStyle(document.getElementById('orb')).backgroundColor"),'rgba(19, 25, 35, 0.18)','percentage orb has a light transparent fill');
   equal(await run(orb,"getComputedStyle(document.getElementById('orb-value')).opacity"),'1','transparent fill keeps the percentage text opaque');
   for(const size of [48,56]){
     await input(orb,{type:'mouseMove',x:size===48?0:24,y:size===48?0:24},320);

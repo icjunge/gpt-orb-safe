@@ -18,6 +18,8 @@ public static class OrbPressInput {
   [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr value);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window,out RECT rect);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
@@ -78,7 +80,9 @@ try {
       $rectangle=New-Object OrbPressInput+RECT
       $cursor=New-Object OrbPressInput+POINT
       if (-not [OrbPressInput]::GetWindowRect($window,[ref]$rectangle) -or -not [OrbPressInput]::GetCursorPos([ref]$cursor)) { throw 'Native bounds/cursor sample unavailable.' }
+      $hit=[OrbPressInput]::GetAncestor([OrbPressInput]::WindowFromPoint($cursor),2)
       Write-Record @{label=$label;operation=$query.operation;sent=$sent;dpi=[OrbPressInput]::GetDpiForWindow($window)
+        visible=[OrbPressInput]::IsWindowVisible($window);minimized=[OrbPressInput]::IsIconic($window);hitTarget=($hit -eq $window)
         bounds=@{x=$rectangle.left;y=$rectangle.top;width=$rectangle.right-$rectangle.left;height=$rectangle.bottom-$rectangle.top}
         cursor=@{x=$cursor.x;y=$cursor.y}}
     } catch { Write-Record @{label=$label;error=$_.Exception.Message} }

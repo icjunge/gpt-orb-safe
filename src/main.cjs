@@ -26,6 +26,7 @@ let orbWindow,panelWindow,tray,bridge,tick,drag=null,saveTimer,quitting=false;
 let updateManager=null,updateTimer=null,firstUpdateTimer=null,extensionInfo=null;
 let codexProvider=null,codexRuntime=null,codexSetup=null;
 let orbController=null;
+let orbRequestedVisible=true;
 let panelHeight=240;
 let appearance=systemAppearance(nativeTheme);
 const unavailableUpdates=()=>({status:'unconfigured',currentVersion:app.getVersion(),availableVersion:null,progress:null,
@@ -115,8 +116,40 @@ function resizePanel(payload){
   if(b.x!==x||b.y!==y||b.width!==width||b.height!==height)panelWindow.setBounds({x,y,width,height});
   return{ok:true};
 }
-function showPanel(){if(quitting||!panelWindow||panelWindow.isDestroyed())return;orbWindow.showInactive();anchorPanel();panelWindow.show();panelWindow.focus();}
-function togglePanel(){if(panelWindow?.isVisible())panelWindow.hide();else showPanel();}
+function orbIsVisible(){return Boolean(orbWindow&&!orbWindow.isDestroyed()&&orbWindow.isVisible()&&!orbWindow.isMinimized());}
+function showOrb({inactive=false}={}){
+  if(quitting||!orbWindow||orbWindow.isDestroyed())return false;
+  orbRequestedVisible=true;
+  if(!orbIsVisible()){
+    if(orbWindow.isMinimized())orbWindow.restore();
+    // A display can disappear while the orb is hidden. Restore the controller's
+    // logical position and native hit region before exposing the alpha window.
+    orbController.syncDisplay();
+    // Explicit recovery must take the normal native show path. showInactive is
+    // reserved for first launch, where stealing focus would be unexpected.
+    if(inactive)orbWindow.showInactive();else orbWindow.show();
+    orbController.refreshShape(true);applyOrbOpacity();
+    orbWindow.webContents.invalidate();
+  }else if(!inactive)orbWindow.moveTop();
+  refreshTrayMenu();publish();return true;
+}
+function hideOrb(){
+  if(quitting||!orbWindow||orbWindow.isDestroyed())return;
+  orbRequestedVisible=false;
+  // A hidden renderer may never receive the mouse release. Finish at the last
+  // observed drag position, without sampling a cursor that has moved to the tray.
+  if(drag){
+    const gesture=drag;drag=null;orbController.endDrag({position:gesture.position});
+    if(gesture.position.x!==gesture.bounds.x||gesture.position.y!==gesture.bounds.y){
+      savedPosition=orbController.compactPosition();clearTimeout(saveTimer);saveTimer=setTimeout(saveSettings,250);
+    }
+  }
+  orbWindow.hide();if(panelWindow&&!panelWindow.isDestroyed())panelWindow.hide();refreshTrayMenu();
+}
+function toggleOrb(){if(orbIsVisible())hideOrb();else showOrb();}
+function showPanel(){if(quitting||!panelWindow||panelWindow.isDestroyed()||!showOrb())return;
+  anchorPanel();if(panelWindow.isMinimized())panelWindow.restore();panelWindow.show();panelWindow.focus();}
+function togglePanel(){if(!orbIsVisible())showPanel();else if(panelWindow?.isVisible())panelWindow.hide();else showPanel();}
 function harden(win,file){
   const contents=win.webContents;
   trustedWindows.set(contents,pathToFileURL(file).href);
@@ -162,15 +195,15 @@ function createWindows(){
   for(const [win,name]of[[orbWindow,'orb'],[panelWindow,'panel']]){
     const file=path.join(__dirname,'ui',name+'.html');harden(win,file);win.setAlwaysOnTop(settings.alwaysOnTop,'floating');
     if(process.platform==='darwin')win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true,skipTransformProcessType:true});
-    win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});win.loadFile(file);
+    win.on('close',e=>{if(!quitting){e.preventDefault();if(win===orbWindow)hideOrb();else win.hide();}});win.loadFile(file);
   }
-  orbWindow.once('ready-to-show',()=>orbWindow.showInactive());
-  panelWindow.once('ready-to-show',()=>{if(!process.argv.includes('--startup')&&!openedAtMacLogin())showPanel();});
+  orbWindow.once('ready-to-show',()=>{if(orbRequestedVisible)showOrb({inactive:true});});
+  panelWindow.once('ready-to-show',()=>{if(orbRequestedVisible&&!process.argv.includes('--startup')&&!openedAtMacLogin())showPanel();});
   orbWindow.webContents.on('context-menu',()=>trayMenu().popup({window:orbWindow}));
 }
 function trayMenu(){return Menu.buildFromTemplate([
   {label:'显示用量面板',click:showPanel},
-  {label:'显示 / 隐藏悬浮球',click:()=>{if(orbWindow.isVisible()){orbWindow.hide();panelWindow.hide();}else orbWindow.showInactive();}},
+  {id:'toggle-orb',label:orbIsVisible()?'隐藏悬浮球':'显示悬浮球',click:toggleOrb},
   {type:'separator'},
   {label:'始终置顶',type:'checkbox',checked:settings.alwaysOnTop,click:item=>applySettings({alwaysOnTop:item.checked})},
   {label:'开机启动',type:'checkbox',checked:settings.autoStart,click:item=>applySettings({autoStart:item.checked})},
@@ -267,7 +300,11 @@ function registerIpc(){
   ipcMain.handle('orb:action',async(event,name,payload)=>{
     if(!allowedSender(event,trustedWindows))return{ok:false,error:'来源无效'};
     try{switch(name){
-      case'togglePanel':togglePanel();break;
+      case'togglePanel':
+        // A release reply can arrive after the user hid the orb in the tray.
+        // The old renderer click must not undo that explicit hide action.
+        if(event.sender===orbWindow?.webContents&&!orbRequestedVisible)return{ok:false};
+        togglePanel();break;
       case'hidePanel':panelWindow.hide();break;
       case'panelResize':if(event.sender!==panelWindow?.webContents)return{ok:false};return resizePanel(payload);
       case'orbExpand':if(event.sender!==orbWindow?.webContents)return{ok:false};return orbController.request(payload);
@@ -310,7 +347,7 @@ function registerIpc(){
         await shell.openExternal('https://github.com/'+repository+'/releases');break;}
       case'setSettings':return applySettings(payload);
       case'dragStart':{
-        if(event.sender!==orbWindow.webContents||drag)return{ok:false};
+        if(event.sender!==orbWindow.webContents||drag||!orbRequestedVisible)return{ok:false};
         const bounds=orbController.beginDrag();
         drag={cursor:screen.getCursorScreenPoint(),bounds,position:{x:bounds.x,y:bounds.y},moved:false};return{ok:true};}
       case'dragMove':
